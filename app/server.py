@@ -246,10 +246,20 @@ def approve(req: ApproveRequest):
 class DeleteRequest(BaseModel):
     item_ids: list[str] = []
     originals_of_pushed: bool = False
+    everything: bool = False     # wipe the library: originals and compressed
+
+
+@app.get("/api/library/cleanup-preview")
+def cleanup_preview():
+    """Sizes for the cleanup buttons, so they can say what they will remove."""
+    return library.cleanup_preview()
 
 
 @app.post("/api/library/cleanup")
 def cleanup(req: DeleteRequest):
+    if req.everything:
+        result = library.delete_all()
+        return {**result, "usage": library.disk_usage()}
     freed = 0
     if req.originals_of_pushed:
         freed += library.delete_originals(states=("pushed",))

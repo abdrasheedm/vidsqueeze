@@ -418,7 +418,8 @@ details[open] summary::before { content: "▾ "; }
       <span class="muted" id="devText"></span>
       <div class="grow"></div>
       <span class="muted num" id="macText"></span>
-      <button class="ghost sm" onclick="fetch('/api/open-library',{method:'POST'})">Open library</button>
+      <button class="ghost sm" id="openLibBtn" onclick="openLibrary()"
+              title="Open the folder holding your originals and compressed copies">Open library</button>
     </div>
     <div class="muted hidden" id="devHelp" style="margin-top:12px;line-height:1.6">
       Enable <b style="color:var(--text-secondary)">Developer options → USB debugging</b>
@@ -573,11 +574,15 @@ details[open] summary::before { content: "▾ "; }
     <div class="card">
       <h2>Disk usage</h2>
       <div class="statgrid" id="diskStats"></div>
-      <div class="row" style="margin-top:14px">
-        <button class="ghost sm" onclick="cleanupOriginals()">Delete originals of pushed videos</button>
-        <span class="muted faint" style="font-size:12px">
+      <div class="row" style="margin-top:14px; flex-wrap:wrap; gap:8px">
+        <button class="ghost sm" onclick="cleanupOriginals()" id="cleanOrigBtn">
+          Delete originals of pushed videos</button>
+        <button class="ghost sm danger" onclick="cleanupEverything()" id="cleanAllBtn">
+          Delete everything</button>
+        <span class="muted faint" style="font-size:12px" id="cleanHint">
           Both copies are kept until you remove them yourself.</span>
       </div>
+      <div class="muted faint" style="font-size:11px; margin-top:8px" id="libPath"></div>
     </div>
   </div>
 </div>
@@ -700,6 +705,11 @@ async function pollDevice() {
     }
     $('macText').textContent =
       `${fmtSize(d.free_bytes ?? d.mac_free_bytes)} free · library ${fmtSize(d.library_bytes)}`;
+    // Show the path too, so "Open library" isn't the only way to find it.
+    if (d.library_dir) {
+      $('libPath').textContent = d.library_dir;
+      $('openLibBtn').title = `Open ${d.library_dir}`;
+    }
   } catch (e) {}
 }
 
@@ -1027,12 +1037,62 @@ function approveAll() {
   if (!ids.length) return toast('Nothing pending review');
   setApproval(ids, true);
 }
-async function cleanupOriginals() {
+async function openLibrary() {
+  // The folder opens behind the browser and Windows won't let it steal focus,
+  // so say what happened instead of leaving the click looking dead.
   try {
-    const d = await postJSON('/api/library/cleanup', {originals_of_pushed:true});
-    toast(d.freed ? `Freed ${fmtSize(d.freed)}` : 'Nothing to delete');
-    loadLibrary();
-  } catch (e) { toast(e.message, true); }
+    await postJSON('/api/open-library', {});
+    toast('Opened the library folder — check your taskbar');
+  } catch (e) { toast(`Could not open the folder: ${e.message}`, true); }
+}
+
+// Destructive actions arm on the first click and fire on the second, so there
+// is always a deliberate second step before anything is removed.
+const armed = {};
+function arm(btnId, label, run) {
+  const b = $(btnId);
+  if (armed[btnId]) {
+    clearTimeout(armed[btnId]); delete armed[btnId];
+    b.textContent = b.dataset.label; b.classList.remove('danger');
+    return run();
+  }
+  b.dataset.label = b.dataset.label || b.textContent.trim();
+  b.textContent = label; b.classList.add('danger');
+  armed[btnId] = setTimeout(() => {
+    delete armed[btnId];
+    b.textContent = b.dataset.label;
+    if (btnId !== 'cleanAllBtn') b.classList.remove('danger');
+  }, 6000);
+}
+
+async function cleanupOriginals() {
+  const p = await fetch('/api/library/cleanup-preview').then(r => r.json()).catch(() => null);
+  if (p && !p.originals_of_pushed) return toast('No pushed videos to clean up');
+  arm('cleanOrigBtn',
+      `Delete ${p ? fmtSize(p.originals_of_pushed) : ''} of originals? Click again`,
+      async () => {
+    try {
+      const d = await postJSON('/api/library/cleanup', {originals_of_pushed:true});
+      toast(d.freed ? `Freed ${fmtSize(d.freed)}` : 'Nothing to delete');
+      loadLibrary();
+    } catch (e) { toast(e.message, true); }
+  });
+}
+
+async function cleanupEverything() {
+  const p = await fetch('/api/library/cleanup-preview').then(r => r.json()).catch(() => null);
+  if (p && !p.items) return toast('Library is already empty');
+  const warn = p && p.unpushed
+    ? ` — ${p.unpushed} not yet pushed!` : '';
+  arm('cleanAllBtn',
+      `Delete all ${p ? p.items : ''} videos, ${p ? fmtSize(p.everything) : ''}${warn} Click again`,
+      async () => {
+    try {
+      const d = await postJSON('/api/library/cleanup', {everything:true});
+      toast(`Deleted ${d.removed} videos, freed ${fmtSize(d.freed)}`);
+      loadLibrary();
+    } catch (e) { toast(e.message, true); }
+  });
 }
 
 // ---------- compare ----------

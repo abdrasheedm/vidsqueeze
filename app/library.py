@@ -178,3 +178,35 @@ def delete_originals(states=("pushed",)):
 def delete_item(item_id):
     """Remove an item and both its files entirely."""
     shutil.rmtree(item_dir(item_id), ignore_errors=True)
+
+
+def delete_all():
+    """Remove every item, originals and compressed alike. Returns a summary.
+
+    'unpushed' counts items whose result never reached the phone or an output
+    folder, so the caller can warn that this throws away finished work.
+    """
+    items = all_items()
+    unpushed = sum(1 for m in items if m.get("state") not in DONE_STATES)
+    freed = disk_usage()["total"]
+    for m in items:
+        delete_item(m["id"])
+    return {"removed": len(items), "unpushed": unpushed, "freed": freed}
+
+
+def cleanup_preview():
+    """What each cleanup action would remove, without removing anything."""
+    originals_of_pushed = 0
+    for m in items_in_state("pushed"):
+        try:
+            originals_of_pushed += os.path.getsize(original_path(m["id"]))
+        except OSError:
+            pass
+    usage = disk_usage()
+    items = all_items()
+    return {
+        "originals_of_pushed": originals_of_pushed,
+        "everything": usage["total"],
+        "items": len(items),
+        "unpushed": sum(1 for m in items if m.get("state") not in DONE_STATES),
+    }
