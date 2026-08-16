@@ -580,7 +580,8 @@ details[open] summary::before { content: "▾ "; }
         <button class="ghost sm danger" onclick="cleanupEverything()" id="cleanAllBtn">
           Delete everything</button>
         <span class="muted faint" style="font-size:12px" id="cleanHint">
-          Both copies are kept until you remove them yourself.</span>
+          Both copies are kept until you remove them yourself. Deleting frees the
+          space but keeps each video's record, thumbnail and the space it saved.</span>
       </div>
       <div class="muted faint" style="font-size:11px; margin-top:8px" id="libPath"></div>
     </div>
@@ -993,7 +994,9 @@ function renderReview() {
   $('revGrid').innerHTML = items.length ? items.map(m => {
     const saved = m.compressed_size && m.original_size
       ? Math.round(100*(1 - m.compressed_size/m.original_size)) : null;
-    const canCompare = m.compressed_size && m.state !== 'kept_original';
+    // Nothing to play once the files are gone; the record and thumbnail stay.
+    const canCompare = m.compressed_size && m.state !== 'kept_original'
+                       && !m.files_deleted;
     return `<div class="rev ${m.state==='approved'?'approved':m.state==='rejected'?'rejected':''}">
       <div class="revthumb" ${canCompare?`onclick="openCompare('${m.id}')"`:''}>
         <img loading="lazy" src="/api/items/${m.id}/thumb"
@@ -1004,7 +1007,7 @@ function renderReview() {
       <div class="revbody">
         <div class="revname" title="${esc(m.name)}">${esc(m.name)}</div>
         <div class="revsize"><s>${fmtSize(m.original_size)}</s> → <b style="color:var(--text-secondary)">${fmtSize(m.compressed_size)}</b>
-          &nbsp;${stateBadge(m.state)}</div>
+          &nbsp;${stateBadge(m.state)}${m.files_deleted?' <span class="muted faint" style="font-size:11px">files removed</span>':''}</div>
         <div class="revacts">
           ${canCompare?`<button class="ghost sm grow" onclick="openCompare('${m.id}')">⇄ Compare</button>`:''}
           ${m.state!=='pushed'&&m.state!=='kept_original'?`
@@ -1065,11 +1068,23 @@ function arm(btnId, label, run) {
   }, 6000);
 }
 
+// Only ever returns a preview it actually understands. An older server without
+// this route answers 404 with a JSON error body, and treating that as "0 files"
+// is how a full library got reported as already empty.
+async function cleanupPreview() {
+  try {
+    const r = await fetch('/api/library/cleanup-preview');
+    if (!r.ok) return null;
+    const p = await r.json();
+    return typeof p.with_files === 'number' ? p : null;
+  } catch (e) { return null; }
+}
+
 async function cleanupOriginals() {
-  const p = await fetch('/api/library/cleanup-preview').then(r => r.json()).catch(() => null);
+  const p = await cleanupPreview();
   if (p && !p.originals_of_pushed) return toast('No pushed videos to clean up');
   arm('cleanOrigBtn',
-      `Delete ${p ? fmtSize(p.originals_of_pushed) : ''} of originals? Click again`,
+      `Delete ${p ? fmtSize(p.originals_of_pushed) + ' of ' : ''}originals? Click again`,
       async () => {
     try {
       const d = await postJSON('/api/library/cleanup', {originals_of_pushed:true});
@@ -1080,16 +1095,17 @@ async function cleanupOriginals() {
 }
 
 async function cleanupEverything() {
-  const p = await fetch('/api/library/cleanup-preview').then(r => r.json()).catch(() => null);
-  if (p && !p.items) return toast('Library is already empty');
-  const warn = p && p.unpushed
-    ? ` — ${p.unpushed} not yet pushed!` : '';
+  const p = await cleanupPreview();
+  // Fall back to the already-loaded library rather than guessing "empty".
+  const n = p ? p.with_files : libItems.filter(m => !m.files_deleted).length;
+  if (!n) return toast('No video files left to delete — the records are kept');
+  const warn = p && p.unpushed ? ` — ${p.unpushed} not yet pushed!` : '';
   arm('cleanAllBtn',
-      `Delete all ${p ? p.items : ''} videos, ${p ? fmtSize(p.everything) : ''}${warn} Click again`,
+      `Delete ${n} video files${p ? ', ' + fmtSize(p.everything) : ''}${warn} Click again`,
       async () => {
     try {
       const d = await postJSON('/api/library/cleanup', {everything:true});
-      toast(`Deleted ${d.removed} videos, freed ${fmtSize(d.freed)}`);
+      toast(`Freed ${fmtSize(d.freed)} — ${d.records_kept} records kept`);
       loadLibrary();
     } catch (e) { toast(e.message, true); }
   });

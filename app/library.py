@@ -180,22 +180,51 @@ def delete_item(item_id):
     shutil.rmtree(item_dir(item_id), ignore_errors=True)
 
 
-def delete_all():
-    """Remove every item, originals and compressed alike. Returns a summary.
+MEDIA_FILES = ("original.mp4", "compressed.mp4")
 
-    'unpushed' counts items whose result never reached the phone or an output
-    folder, so the caller can warn that this throws away finished work.
+
+def purge_media(item_ids=None):
+    """Delete the video files but keep each item's record and thumbnail.
+
+    meta.json holds the sizes the "space saved" figure is computed from, and the
+    thumbnail is what makes an entry recognisable afterwards. Removing the whole
+    item directory would erase the record of everything that was ever
+    compressed, so only the two large files go.
     """
-    items = all_items()
-    unpushed = sum(1 for m in items if m.get("state") not in DONE_STATES)
-    freed = disk_usage()["total"]
+    items = ([m for m in (load(i) for i in item_ids) if m]
+             if item_ids is not None else all_items())
+    freed = purged = 0
     for m in items:
-        delete_item(m["id"])
-    return {"removed": len(items), "unpushed": unpushed, "freed": freed}
+        gone = 0
+        for name in MEDIA_FILES:
+            p = os.path.join(item_dir(m["id"]), name)
+            try:
+                size = os.path.getsize(p)
+                os.remove(p)
+                gone += size
+            except OSError:
+                pass
+        if gone:
+            purged += 1
+            freed += gone
+        update(m["id"], files_deleted=True)
+    return {"purged": purged, "freed": freed, "records_kept": len(items)}
+
+
+def saved_bytes():
+    """Total space saved, from the records rather than the files on disk.
+
+    Deliberately independent of whether the videos still exist, so the figure
+    survives a cleanup.
+    """
+    return sum(max(0, (m.get("original_size") or 0) - (m.get("compressed_size") or 0))
+               for m in all_items()
+               if m.get("compressed_size")
+               and m.get("state") in ("ready_for_review", "approved", "pushed"))
 
 
 def cleanup_preview():
-    """What each cleanup action would remove, without removing anything."""
+    """What each cleanup action would free, without removing anything."""
     originals_of_pushed = 0
     for m in items_in_state("pushed"):
         try:
@@ -204,9 +233,14 @@ def cleanup_preview():
             pass
     usage = disk_usage()
     items = all_items()
+    with_files = sum(1 for m in items
+                     if os.path.exists(original_path(m["id"]))
+                     or os.path.exists(compressed_path(m["id"])))
     return {
         "originals_of_pushed": originals_of_pushed,
         "everything": usage["total"],
         "items": len(items),
+        "with_files": with_files,
         "unpushed": sum(1 for m in items if m.get("state") not in DONE_STATES),
+        "saved_bytes": saved_bytes(),
     }

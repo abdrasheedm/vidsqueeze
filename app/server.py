@@ -246,7 +246,7 @@ def approve(req: ApproveRequest):
 class DeleteRequest(BaseModel):
     item_ids: list[str] = []
     originals_of_pushed: bool = False
-    everything: bool = False     # wipe the library: originals and compressed
+    everything: bool = False     # delete every video file, keeping the records
 
 
 @app.get("/api/library/cleanup-preview")
@@ -258,7 +258,9 @@ def cleanup_preview():
 @app.post("/api/library/cleanup")
 def cleanup(req: DeleteRequest):
     if req.everything:
-        result = library.delete_all()
+        # Frees the space but keeps meta.json and the thumbnail, so the record
+        # of what was compressed - and how much it saved - survives.
+        result = library.purge_media()
         return {**result, "usage": library.disk_usage()}
     freed = 0
     if req.originals_of_pushed:
