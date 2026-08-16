@@ -1,16 +1,18 @@
 """FastAPI server for the local web UI."""
 import mimetypes
 import os
+import platform
 import re
 import shutil
-import subprocess
+import sys
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from . import ledger, library, phone, thumbs
-from .config import (LIBRARY_DIR, PIDFILE, VIDEO_EXTENSIONS, ensure_data_dirs)
+from . import hwaccel, ledger, library, osutil, phone, thumbs
+from .config import (COMPUTER, LIBRARY_DIR, PIDFILE, VIDEO_EXTENSIONS,
+                     ensure_data_dirs, missing_tools)
 from .encoder import EncodeOptions
 from .job import EncodePhase, PullPhase, PushPhase, check_disk_space
 
@@ -39,11 +41,7 @@ def _other_server_pid():
         return None
     if pid == os.getpid():
         return None
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return None
-    return pid
+    return pid if osutil.pid_alive(pid) else None
 
 
 def _write_pidfile():
@@ -71,9 +69,25 @@ def device():
         "library_originals": usage["originals"],
         "library_compressed": usage["compressed"],
         "library_dir": LIBRARY_DIR,
-        "mac_free_bytes": disk.free,
+        "free_bytes": disk.free,
+        "mac_free_bytes": disk.free,   # legacy key, kept for older UI builds
+        "computer": COMPUTER,
     })
     return status
+
+
+@app.get("/api/system")
+def system():
+    """What this machine can do — drives the encoder-profile labels in the UI."""
+    return {
+        "os": platform.system(),
+        "os_release": platform.release(),
+        "machine": platform.machine(),
+        "python": sys.version.split()[0],
+        "computer": COMPUTER,
+        "hardware_encoder": hwaccel.summary(),
+        "missing_tools": missing_tools(),
+    }
 
 
 @app.get("/api/videos")
@@ -275,7 +289,8 @@ class EncodeRequest(BaseModel):
     profile: str = "quality"
     crf: int = 32
     preset: str = "slow"
-    vt_quality: int = 55
+    hw_quality: int = None       # 1..100, higher = better
+    vt_quality: int = None       # legacy name for hw_quality
     max_long_edge: int = 1920
     audio_bitrate: str = "128k"
 
@@ -289,11 +304,12 @@ def start_encode(req: EncodeRequest):
         raise HTTPException(status_code=400, detail="Nothing to encode")
     if req.profile not in ("quality", "fast"):
         raise HTTPException(status_code=400, detail="Unknown profile")
+    hw_q = req.hw_quality if req.hw_quality is not None else req.vt_quality
     opts = EncodeOptions(
         profile=req.profile,
         crf=max(18, min(40, req.crf)),
         preset=req.preset if req.preset in ("medium", "slow") else "slow",
-        vt_quality=max(1, min(100, req.vt_quality)),
+        hw_quality=max(1, min(100, hw_q if hw_q is not None else 55)),
         max_long_edge=req.max_long_edge if req.max_long_edge > 0 else 0,
         audio_bitrate=req.audio_bitrate,
     )
@@ -358,5 +374,9 @@ def history():
 
 @app.post("/api/open-library")
 def open_library():
-    subprocess.Popen(["open", LIBRARY_DIR])
+    ensure_data_dirs()
+    try:
+        osutil.open_in_file_manager(LIBRARY_DIR)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not open folder: {e}")
     return {"ok": True}

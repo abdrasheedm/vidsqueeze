@@ -2,7 +2,7 @@
 import os
 import subprocess
 
-from .config import EXIFTOOL
+from .config import EXIFTOOL, NO_WINDOW
 
 
 def copy_all_tags(src, dst):
@@ -15,7 +15,8 @@ def copy_all_tags(src, dst):
            "-TagsFromFile", src, "-all:all>all:all",
            "--QuickTime:Rotation", "--QuickTime:MatrixStructure",
            dst]
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                         encoding="utf-8", errors="replace", **NO_WINDOW)
     if out.returncode != 0:
         raise RuntimeError(f"exiftool failed: {out.stderr.strip() or out.stdout.strip()}")
 

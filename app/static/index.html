@@ -436,7 +436,7 @@ details[open] summary::before { content: "▾ "; }
       <div class="row">
         <div class="seg">
           <button id="srcPhone" class="on" onclick="setSource('phone')">Phone</button>
-          <button id="srcFolder" onclick="setSource('folder')">Folder on Mac</button>
+          <button id="srcFolder" onclick="setSource('folder')">Folder on this <span class="pcName">Mac</span></button>
         </div>
         <div id="folderPick" class="row hidden grow">
           <input id="folderPath" class="grow" placeholder="~/Movies/to-compress" style="min-width:220px">
@@ -467,10 +467,10 @@ details[open] summary::before { content: "▾ "; }
 
       <div class="row" style="margin-top:16px">
         <span id="selSummary" class="muted grow">Nothing selected</span>
-        <button id="pullBtn" onclick="startPull()" disabled>Pull to Mac →</button>
+        <button id="pullBtn" onclick="startPull()" disabled>Pull to <span class="pcName">Mac</span> →</button>
       </div>
       <div class="muted faint" style="margin-top:10px;font-size:12px">
-        Originals are copied to your Mac first. Once pulled, the phone can be unplugged —
+        Originals are copied to this <span class="pcName">Mac</span> first. Once pulled, the phone can be unplugged —
         compressing and reviewing work entirely offline.
       </div>
     </div>
@@ -483,7 +483,7 @@ details[open] summary::before { content: "▾ "; }
       <div class="row">
         <div class="seg">
           <button id="pQuality" class="on" onclick="setProfile('quality')">Quality · x265</button>
-          <button id="pFast" onclick="setProfile('fast')">Fast · hardware</button>
+          <button id="pFast" onclick="setProfile('fast')">Fast · <span id="pFastName">hardware</span></button>
         </div>
         <span class="muted" id="profileHint"></span>
       </div>
@@ -500,7 +500,8 @@ details[open] summary::before { content: "▾ "; }
           <label class="f">Hardware quality
             <span class="row" style="gap:8px"><input type="range" id="vtq" min="30" max="80" value="55"
               oninput="vtqVal.textContent=this.value" style="width:130px">
-              <b class="num" id="vtqVal" style="font-size:13px">55</b></span></label>
+              <b class="num" id="vtqVal" style="font-size:13px">55</b></span>
+            <span class="muted" id="hwqHint" style="font-size:11px"></span></label>
           <label class="f">Resolution
             <select id="maxEdge"><option value="1920" selected>Downscale to 1080p</option>
               <option value="0">Keep original</option></select></label>
@@ -594,6 +595,7 @@ details[open] summary::before { content: "▾ "; }
 <script>
 let videos = [], selected = new Set(), collapsed = new Set();
 let source = 'phone', profile = 'quality', tab = 'select';
+let sysInfo = {computer: 'computer', hardware_encoder: {available: false}};
 let libItems = [], revFilter = 'ready_for_review', modalItem = null;
 let cmpMode = 'split', cmpPos = 50;
 
@@ -667,7 +669,7 @@ async function pollDevice() {
       txt.textContent = 'Folder mode still works'; help.classList.remove('hidden');
     }
     $('macText').textContent =
-      `${fmtSize(d.mac_free_bytes)} free · library ${fmtSize(d.library_bytes)}`;
+      `${fmtSize(d.free_bytes ?? d.mac_free_bytes)} free · library ${fmtSize(d.library_bytes)}`;
   } catch (e) {}
 }
 
@@ -832,12 +834,14 @@ function setProfile(p) {
   $('pFast').classList.toggle('on', p==='fast');
   $('profileHint').textContent = p === 'quality'
     ? 'Best compression. Slow — fine to leave running for hours.'
-    : 'Apple hardware encoder: ~10× faster, files ~1.5–2× larger.';
+    : (sysInfo.hardware_encoder && sysInfo.hardware_encoder.available
+        ? `${sysInfo.hardware_encoder.label}: far faster, files somewhat larger.`
+        : 'No hardware encoder on this machine — falls back to libx265 (veryfast).');
 }
 async function startEncode() {
   try {
     await postJSON('/api/phases/encode', {profile, crf:+$('crf').value, preset:$('preset').value,
-      vt_quality:+$('vtq').value, max_long_edge:+$('maxEdge').value, audio_bitrate:$('abr').value});
+      hw_quality:+$('vtq').value, max_long_edge:+$('maxEdge').value, audio_bitrate:$('abr').value});
     pollPhase();
   } catch (e) { toast(e.message, true); }
 }
@@ -1130,7 +1134,27 @@ document.addEventListener('keydown', e => {
   else if (e.key === 'b' || e.key === 'B') cmpAudio('B');
 });
 
+// Which encoder this machine really has decides several labels, so load it
+// before the first setProfile() paints the hint.
+async function loadSystem() {
+  try {
+    sysInfo = await (await fetch('/api/system')).json();
+  } catch (e) { return; }
+  document.querySelectorAll('.pcName').forEach(el => el.textContent = sysInfo.computer);
+  const hw = sysInfo.hardware_encoder || {};
+  $('pFastName').textContent = hw.available ? hw.label : 'software';
+  $('hwqHint').textContent = hw.available
+    ? (hw.encoder === 'hevc_videotoolbox' ? 'VideoToolbox -q:v scale' : 'mapped to the encoder’s CQ')
+    : 'no hardware encoder detected';
+  if (hw.available && !hw.ten_bit)
+    toast('Hardware encoder is 8-bit only — HDR clips will use libx265', true);
+  if ((sysInfo.missing_tools || []).length)
+    toast('Missing tools: ' + sysInfo.missing_tools.join(', '), true);
+  setProfile(profile);
+}
+
 setProfile('quality');
+loadSystem();
 pollDevice(); setInterval(pollDevice, 5000);
 pollPhase(); setInterval(pollPhase, 1200);
 loadLibrary();

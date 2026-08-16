@@ -4,7 +4,7 @@ import os
 import shlex
 import subprocess
 
-from .config import ADB, PHONE_VIDEO_DIRS, VIDEO_EXTENSIONS
+from .config import ADB, NO_WINDOW, PHONE_VIDEO_DIRS, VIDEO_EXTENSIONS
 
 
 class PhoneError(Exception):
@@ -13,9 +13,11 @@ class PhoneError(Exception):
 
 def _adb(*args, timeout=30):
     try:
-        out = subprocess.run([ADB, *args], capture_output=True, text=True, timeout=timeout)
+        out = subprocess.run([ADB, *args], capture_output=True, text=True,
+                             timeout=timeout, encoding="utf-8", errors="replace",
+                             **NO_WINDOW)
     except FileNotFoundError:
-        raise PhoneError("adb is not installed (run setup.sh)")
+        raise PhoneError("adb is not installed (run the setup script)")
     except subprocess.TimeoutExpired:
         raise PhoneError(f"adb timed out: {' '.join(args[:3])}...")
     return out

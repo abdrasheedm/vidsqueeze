@@ -3,7 +3,7 @@ import json
 import subprocess
 from dataclasses import dataclass
 
-from .config import FFPROBE
+from .config import FFPROBE, NO_WINDOW
 
 HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}
 
@@ -51,7 +51,8 @@ def _parse_fps(rate):
 def probe(path):
     cmd = [FFPROBE, "-v", "error", "-print_format", "json",
            "-show_format", "-show_streams", path]
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=60,
+                         encoding="utf-8", errors="replace", **NO_WINDOW)
     if out.returncode != 0:
         raise RuntimeError(f"ffprobe failed for {path}: {out.stderr.strip()}")
     data = json.loads(out.stdout)

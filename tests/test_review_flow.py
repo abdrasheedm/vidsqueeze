@@ -3,17 +3,18 @@
 The critical assertion: the phone file is NOT modified until the item is
 explicitly approved and a push phase runs.
 
-Run:  .venv/bin/python tests/test_review_flow.py
+Run:  .venv/bin/python tests/test_review_flow.py   (Windows: .venv\\Scripts\\python)
 """
 import os
+import platform
 import shutil
 import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app import library, phone  # noqa: E402
-from app.config import FFMPEG, LIBRARY_DIR  # noqa: E402
+from app import hwaccel, library, phone  # noqa: E402
+from app.config import NO_WINDOW, FFMPEG, LIBRARY_DIR  # noqa: E402
 from app.encoder import EncodeOptions  # noqa: E402
 from app.job import EncodePhase, PullPhase, PushPhase  # noqa: E402
 
@@ -45,7 +46,7 @@ def make_video(path, seconds=2, size="1280x720"):
                     "-t", str(seconds), "-shortest",
                     "-metadata", "creation_time=2024-06-01T10:00:00.000000Z",
                     "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-                    "-b:v", "6M", "-c:a", "aac", path], check=True)
+                    "-b:v", "6M", "-c:a", "aac", path], check=True, **NO_WINDOW)
     os.utime(path, (MTIME, MTIME))
 
 
@@ -73,6 +74,10 @@ def main():
     os.makedirs(FAKE); os.makedirs(OUTDIR)
     phone.pull, phone.stat_remote, phone.push_replace = (
         fake_pull, fake_stat_remote, fake_push_replace)
+    print(f"platform: {platform.system()} {platform.release()} "
+          f"({platform.machine()})")
+    print(f"fast profile: {hwaccel.summary()['detail']}")
+    print()
 
     created = []
 
@@ -97,7 +102,7 @@ def main():
           os.path.exists(library.thumb_path(item_id)))
     check("after pull: probe recorded", bool(meta.get("probe")))
 
-    e = EncodePhase([item_id], EncodeOptions(profile="fast", vt_quality=40,
+    e = EncodePhase([item_id], EncodeOptions(profile="fast", hw_quality=40,
                                              max_long_edge=640)).start()
     wait(e)
     meta = library.load(item_id)
@@ -127,7 +132,7 @@ def main():
     check("phone file now smaller", os.path.getsize(src) < orig_size,
           f"{os.path.getsize(src)} vs {orig_size}")
     check("phone mtime preserved", int(os.path.getmtime(src)) == MTIME)
-    check("both copies still on Mac",
+    check("both copies still kept locally",
           os.path.exists(library.original_path(item_id))
           and os.path.exists(library.compressed_path(item_id)))
 
@@ -153,7 +158,7 @@ def main():
     fid = fmeta["id"]
 
     wait(PullPhase([fid]).start())
-    wait(EncodePhase([fid], EncodeOptions(profile="fast", vt_quality=40,
+    wait(EncodePhase([fid], EncodeOptions(profile="fast", hw_quality=40,
                                           max_long_edge=640)).start())
     check("folder mode: ready for review",
           library.load(fid)["state"] == "ready_for_review",

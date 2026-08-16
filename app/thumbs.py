@@ -3,7 +3,7 @@ import hashlib
 import os
 import subprocess
 
-from .config import ADB, FFMPEG, THUMB_DIR, ensure_data_dirs
+from .config import ADB, FFMPEG, NO_WINDOW, THUMB_DIR, ensure_data_dirs
 
 # How much of a remote file to read when extracting a poster frame. MP4s written
 # by the camera put the moov atom at the front, so the first few MB decode fine.
@@ -29,7 +29,8 @@ def _extract_frame(input_arg, out_path, stdin_data=None, seek=None):
     cmd += ["-i", input_arg, "-frames:v", "1",
             "-vf", f"scale={THUMB_WIDTH}:-2", "-q:v", "5", out_path]
     try:
-        r = subprocess.run(cmd, input=stdin_data, capture_output=True, timeout=90)
+        r = subprocess.run(cmd, input=stdin_data, capture_output=True, timeout=90,
+                           **NO_WINDOW)
     except subprocess.TimeoutExpired:
         return False
     return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0
@@ -58,7 +59,7 @@ def from_phone(remote_path, mtime, size):
     cmd = [ADB, "exec-out",
            f"dd if='{remote_path}' bs=1M count={head_mb} 2>/dev/null"]
     try:
-        r = subprocess.run(cmd, capture_output=True, timeout=120)
+        r = subprocess.run(cmd, capture_output=True, timeout=120, **NO_WINDOW)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return None
     if r.returncode != 0 or not r.stdout:

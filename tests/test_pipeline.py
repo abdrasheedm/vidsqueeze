@@ -4,20 +4,25 @@ Generates test clips that mimic S24 Ultra footage (4K60, portrait-with-rotation,
 10-bit HDR), runs the real pipeline functions on them, and asserts that
 dimensions, fps, duration, dates, GPS and file mtime all survive.
 
-Run:  .venv/bin/python tests/test_pipeline.py
+Runs on macOS, Windows and Linux: the "fast" profile uses whatever hardware
+encoder this machine actually has, and falls back to libx265 if it has none.
+
+Run:  .venv/bin/python tests/test_pipeline.py       (Windows: .venv\\Scripts\\python)
 """
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app import metadata  # noqa: E402
-from app.config import FFMPEG, FFPROBE, EXIFTOOL  # noqa: E402
-from app.encoder import EncodeOptions, Encoder  # noqa: E402
-from app.probe import probe  # noqa: E402
+from app import hwaccel, metadata  # noqa: E402
+from app.config import NO_WINDOW, FFMPEG, FFPROBE, EXIFTOOL  # noqa: E402
+from app.encoder import (EncodeOptions, Encoder, build_command,  # noqa: E402
+                         quality_to_cq, resolve_hw)
+from app.probe import ProbeResult, probe  # noqa: E402
 
 TMP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp")
 MTIME = 1717236000  # 2024-06-01 10:00:00 UTC
@@ -35,7 +40,9 @@ def check(name, cond, detail=""):
 
 
 def run(cmd, **kw):
-    r = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    kw.setdefault("encoding", "utf-8")
+    kw.setdefault("errors", "replace")
+    r = subprocess.run(cmd, capture_output=True, text=True, **NO_WINDOW, **kw)
     if r.returncode != 0:
         raise RuntimeError(f"command failed: {' '.join(cmd)}\n{r.stderr[-800:]}")
     return r
@@ -97,7 +104,11 @@ def common_checks(label, src, dst, pr_in, pr_out):
 def main():
     shutil.rmtree(TMP, ignore_errors=True)
     os.makedirs(TMP)
-    fast = EncodeOptions(profile="fast", vt_quality=55, max_long_edge=1920)
+    hw = hwaccel.summary()
+    print(f"platform: {platform.system()} {platform.release()} ({platform.machine()})")
+    print(f"fast profile: {hw['detail']}")
+    print()
+    fast = EncodeOptions(profile="fast", hw_quality=55, max_long_edge=1920)
     quality = EncodeOptions(profile="quality", crf=32, preset="medium", max_long_edge=1920)
 
     print("== 1. Landscape 4K60 → fast profile (scale + fps + metadata) ==")
@@ -160,6 +171,63 @@ def main():
     print(f"  encoded in {secs:.1f}s")
     check("sdr720: output is 8-bit", not pr_out.is_10bit, pr_out.pix_fmt)
     common_checks("sdr720", src_s, dst_s, pr_in, pr_out)
+
+    print("== 5. 10-bit HDR → fast profile (hardware 10-bit, or software fallback) ==")
+    # The one thing that must never happen to HDR footage is a silent drop to
+    # 8-bit, which washes the colours out. Whichever encoder the fast profile
+    # resolves to, the output has to stay 10-bit.
+    dst_hw = os.path.join(TMP, "out_hdr_fast.mp4")
+    pr_in, pr_out, secs = compress(src_h, dst_hw, fast)
+    print(f"  encoded in {secs:.1f}s, {os.path.getsize(src_h)} -> "
+          f"{os.path.getsize(dst_hw)} bytes")
+    check("hdr-fast: output stays 10-bit", pr_out.is_10bit, pr_out.pix_fmt)
+    check("hdr-fast: transfer preserved", pr_out.color_transfer == "smpte2084",
+          pr_out.color_transfer)
+    check("hdr-fast: primaries preserved", pr_out.color_primaries == "bt2020",
+          pr_out.color_primaries)
+    common_checks("hdr-fast", src_h, dst_hw, pr_in, pr_out)
+
+    print("== 6. Encoder argument mapping (all platforms, no encoding) ==")
+    # Guards the cross-platform contract without needing the hardware present.
+    sdr = ProbeResult(3840, 2160, 10.0, 60.0, "hevc", "yuv420p", 8,
+                      "bt709", "bt709", "bt709", 50_000_000, 0)
+    hdr10 = ProbeResult(3840, 2160, 10.0, 60.0, "hevc", "yuv420p10le", 10,
+                        "bt2020", "smpte2084", "bt2020nc", 80_000_000, 0)
+    check("cq mapping is monotonic and inverted",
+          quality_to_cq(30) > quality_to_cq(55) > quality_to_cq(80),
+          f"{quality_to_cq(30)} / {quality_to_cq(55)} / {quality_to_cq(80)}")
+
+    expectations = {
+        # encoder            quality flag        8-bit fmt   10-bit fmt
+        "hevc_videotoolbox": ("-q:v", "55",      "yuv420p",  "p010le"),
+        "hevc_nvenc":        ("-cq", "29",       "yuv420p",  "p010le"),
+        "hevc_qsv":          ("-global_quality", "29", "nv12", "p010le"),
+        "hevc_amf":          ("-qp_i", "29",     "nv12",     "p010le"),
+    }
+    for enc, (flag, val, fmt8, fmt10) in expectations.items():
+        opts = EncodeOptions(profile="fast", hw_quality=55, hw_encoder=enc)
+        c8 = build_command("i.mp4", "o.mp4", opts, sdr)
+        c10 = build_command("i.mp4", "o.mp4", opts, hdr10)
+        check(f"{enc}: selected", "-c:v" in c8 and c8[c8.index("-c:v") + 1] == enc)
+        check(f"{enc}: quality flag {flag}={val}",
+              flag in c8 and c8[c8.index(flag) + 1] == val,
+              " ".join(c8[c8.index("-c:v"):c8.index("-c:a")]))
+        check(f"{enc}: 8-bit pixel format", fmt8 in c8,
+              " ".join(c8[c8.index("-c:v"):c8.index("-c:a")]))
+        # An encoder that cannot do 10-bit is expected to fall back to libx265
+        # rather than quietly truncating HDR to 8 bits — either way the output
+        # must stay 10-bit.
+        _, hw10, _ = resolve_hw(opts)
+        want = (fmt10, "main10") if hw10 else ("yuv420p10le",)
+        check(f"{enc}: 10-bit path ({'hardware' if hw10 else 'software fallback'})",
+              all(w in c10 for w in want),
+              " ".join(c10[c10.index("-c:v"):c10.index("-c:a")]))
+
+    # NVENC ignores -cq unless the VBR target bitrate is explicitly zeroed.
+    nv = build_command("i.mp4", "o.mp4",
+                       EncodeOptions(profile="fast", hw_encoder="hevc_nvenc"), sdr)
+    check("hevc_nvenc: -b:v 0 present so -cq is honoured",
+          "-b:v" in nv and nv[nv.index("-b:v") + 1] == "0", " ".join(nv))
 
     print()
     if failures:

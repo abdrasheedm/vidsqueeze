@@ -12,6 +12,12 @@ __pycache__/
 tests/tmp/
 tests/tmp_*/
 
+# App data: originals, compressed copies, logs, thumbnails. Can reach tens of GB.
+VideoCompressor/
+
+# Portable ffmpeg/exiftool/adb dropped in by setup
+tools/
+
 # macOS
 .DS_Store
 ._*

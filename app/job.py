@@ -50,7 +50,7 @@ class Phase:
                 self._encoder.cancel()
 
     def _log(self, msg):
-        with open(self.log_path, "a") as f:
+        with open(self.log_path, "a", encoding="utf-8", errors="replace") as f:
             f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
 
     def _run(self):
@@ -220,8 +220,7 @@ class PushPhase(Phase):
 def check_disk_space(total_bytes):
     """Library keeps originals AND compressed files, so require room for both."""
     ensure_data_dirs()
-    st = os.statvfs(LIBRARY_DIR)
-    free = st.f_bavail * st.f_frsize
+    free = shutil.disk_usage(LIBRARY_DIR).free
     needed = int(total_bytes * 1.25) + 2 * 1024**3
     if free < needed:
         raise RuntimeError(
