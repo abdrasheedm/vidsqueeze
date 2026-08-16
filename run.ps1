@@ -1,4 +1,4 @@
-<#
+﻿<#
     Start the VidSqueeze server and open the UI in the browser.
     Usage:  powershell -ExecutionPolicy Bypass -File .\run.ps1
 #>
@@ -12,7 +12,7 @@ $env:Path = ($machine, $user | Where-Object { $_ }) -join ";"
 
 $venvPy = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $venvPy)) {
-    Write-Host "No .venv yet — running setup.ps1 first..." -ForegroundColor Cyan
+    Write-Host "No .venv yet - running setup.ps1 first..." -ForegroundColor Cyan
     & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "setup.ps1")
     if (-not (Test-Path $venvPy)) { throw "setup.ps1 did not produce a venv" }
 }

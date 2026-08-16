@@ -1,9 +1,9 @@
-<#
+﻿<#
     One-time Windows setup: system tools + Python environment.
 
     Installs ffmpeg, exiftool and adb (via winget, falling back to scoop), then
     creates the venv and verifies that hardware encoding actually works on this
-    machine — which is not the same question as whether ffmpeg was built with
+    machine - which is not the same question as whether ffmpeg was built with
     an NVENC/QSV/AMF encoder.
 
     Usage:  powershell -ExecutionPolicy Bypass -File .\setup.ps1
@@ -74,7 +74,7 @@ if ($SkipTools) {
         if (-not (Install-WithWinget "OliverBetz.ExifTool" "exiftool" $null)) {
             if (Test-Tool scoop) { scoop install exiftool | Out-Null; Sync-Path }
         }
-        if (Test-Tool exiftool) { Ok "exiftool installed" } else { Warn "exiftool not found — metadata copying will fail" }
+        if (Test-Tool exiftool) { Ok "exiftool installed" } else { Warn "exiftool not found - metadata copying will fail" }
     }
 
     if (Test-Tool adb) {
@@ -83,7 +83,7 @@ if ($SkipTools) {
         if (-not (Install-WithWinget "Google.PlatformTools" "adb (Android platform-tools)" $null)) {
             if (Test-Tool scoop) { scoop install adb | Out-Null; Sync-Path }
         }
-        if (Test-Tool adb) { Ok "adb installed" } else { Warn "adb not found — phone mode unavailable, folder mode still works" }
+        if (Test-Tool adb) { Ok "adb installed" } else { Warn "adb not found - phone mode unavailable, folder mode still works" }
     }
 }
 
@@ -93,7 +93,7 @@ $python = $null
 foreach ($c in @("python", "python3", "py")) {
     if (Test-Tool $c) { $python = $c; break }
 }
-if (-not $python) { Fail "Python 3 not found — install it from https://python.org or 'winget install Python.Python.3.12'"; exit 1 }
+if (-not $python) { Fail "Python 3 not found - install it from https://python.org or 'winget install Python.Python.3.12'"; exit 1 }
 
 if (-not (Test-Path ".venv")) {
     Info "creating .venv..."
@@ -114,7 +114,7 @@ try { $hw = $detect | ConvertFrom-Json } catch { $hw = $null }
 
 if ($hw -and $hw.available) {
     Ok "$($hw.detail)"
-    if (-not $hw.ten_bit) { Warn "10-bit HEVC not supported — HDR clips will use libx265 instead" }
+    if (-not $hw.ten_bit) { Warn "10-bit HEVC not supported - HDR clips will use libx265 instead" }
 } else {
     Warn "no hardware encoder available"
     if ($hw) { Info $hw.detail }
@@ -132,7 +132,7 @@ if ($hw -and $hw.available) {
         }
     }
     if (-not ($hw -and $hw.available)) {
-        Warn "the 'Fast' profile will fall back to libx265 — correct, just slower"
+        Warn "the 'Fast' profile will fall back to libx265 - correct, just slower"
     }
 }
 
