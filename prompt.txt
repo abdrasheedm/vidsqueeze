@@ -1,0 +1,25 @@
+ I'm continuing development of VidSqueeze, a video compression tool I built on my MacBook Air M5. It's now running on my Lenovo Legion (Windows) and I want to make it work here, taking advantage of this machine's discrete GPU for much faster encoding.
+▎
+▎ What the app does: Compresses Android camera videos while preserving all metadata (filenames, recording dates, GPS, file timestamps) so my phone's gallery timeline is unchanged. It's a local FastAPI + vanilla-JS web app. The workflow has three phases so the phone isn't tethered during the slow part: Pull (copy originals from phone over ADB) → Encode (offline, no phone needed) → Review & approve (A/B compare) → Push approved files back. Nothing is written to the phone without explicit approval. Read the README first for the full picture.
+▎
+▎ Your task: Create a branch called windows-legion and make the app work on Windows with hardware-accelerated encoding.
+▎
+▎ Start by detecting this machine's actual hardware — don't assume. Run nvidia-smi for the GPU model and driver, check ffmpeg -encoders | findstr hevc for which hardware encoders this ffmpeg build actually supports, and check the CPU. Report what you find before making changes.
+▎
+▎ The four known macOS-specific spots (I checked these before switching machines):
+▎ 1. app/encoder.py:34 — hardcodes hevc_videotoolbox (Apple-only). Needs the right encoder for this GPU: hevc_nvenc for NVIDIA, hevc_qsv for Intel Quick Sync, hevc_amf for AMD. The quality settings differ too — NVENC uses -cq rather than VideoToolbox's -q:v, so the parameter mapping needs rethinking, not just a name swap.
+▎ 2. app/job.py:223 — os.statvfs doesn't exist on Windows; use shutil.disk_usage() (already used elsewhere in server.py).
+▎ 3. app/server.py:361 — subprocess.Popen(["open", ...]) is macOS; Windows needs explorer (or os.startfile).
+▎ 4. app/config.py:26 — falls back to Homebrew paths /opt/homebrew/bin:/usr/local/bin.
+▎
+▎ Also: setup.sh and run.sh are bash/Homebrew-specific and need Windows equivalents (.bat or PowerShell) that install or locate ffmpeg, exiftool, and adb.
+▎
+▎ Important: make this properly cross-platform rather than Windows-only — detect the OS and available encoders at runtime and pick appropriately, so the same codebase still runs on my Mac. I want to merge this back to main eventually.
+▎
+▎ Two things worth investigating with real tests on this hardware:
+▎ - Whether this GPU's NVENC generation supports 10-bit HEVC, which matters because my phone shoots HDR video and 8-bit re-encoding would wash out the colors. The code already detects HDR/10-bit sources in app/probe.py and handles them in encoder.py.
+▎ - How NVENC output size and quality actually compare to libx265 at similar visual quality, using real test clips. This determines which profile I should use for a ~67GB batch.
+▎
+▎ There are two test suites — tests/test_pipeline.py (metadata, HDR, portrait rotation, GPS preservation) and tests/test_review_flow.py (approval gate, resume, folder mode). Both must pass on Windows. They currently generate test clips with ffmpeg and may have POSIX assumptions of their own.
+▎
+▎ Don't push anything until I've reviewed it.
