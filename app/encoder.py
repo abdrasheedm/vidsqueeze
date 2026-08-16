@@ -34,6 +34,10 @@ class EncodeOptions:
     max_long_edge: int = 1920         # None/0 = keep original resolution
     audio_bitrate: str = "128k"
     hw_encoder: str = ""              # "" = auto-detect
+    # Pacing for long runs: rest `rest_seconds` after every `batch_size` files.
+    # 0 on either disables it.
+    batch_size: int = 0
+    rest_seconds: int = 0
     # Accepted for backwards compatibility with the VideoToolbox-only version.
     vt_quality: int = None
 

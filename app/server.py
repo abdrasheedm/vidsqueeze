@@ -293,6 +293,8 @@ class EncodeRequest(BaseModel):
     vt_quality: int = None       # legacy name for hw_quality
     max_long_edge: int = 1920
     audio_bitrate: str = "128k"
+    batch_size: int = 0          # rest after this many files (0 = never)
+    rest_seconds: int = 0        # how long to rest between batches
 
 
 @app.post("/api/phases/encode")
@@ -312,6 +314,8 @@ def start_encode(req: EncodeRequest):
         hw_quality=max(1, min(100, hw_q if hw_q is not None else 55)),
         max_long_edge=req.max_long_edge if req.max_long_edge > 0 else 0,
         audio_bitrate=req.audio_bitrate,
+        batch_size=max(0, min(1000, req.batch_size)),
+        rest_seconds=max(0, min(3600, req.rest_seconds)),
     )
     _phase = EncodePhase(ids, opts).start()
     return _phase.snapshot()

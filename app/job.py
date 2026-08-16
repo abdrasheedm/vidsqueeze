@@ -118,6 +118,10 @@ class Phase:
         # that aren't running an encoder.
         self.progress = 0.0
         self.speed = ""
+        # Set while pausing between batches, so the UI can say so rather than
+        # looking stalled.
+        self.resting = False
+        self.rest_left = 0
         self.log_path = os.path.join(LOG_DIR, f"{self.id}-{self.kind}.log")
         self._cancel = threading.Event()
         self._encoder = None
@@ -140,7 +144,7 @@ class Phase:
     def _run(self):
         failures = 0
         try:
-            for item_id in self.item_ids:
+            for attempted, item_id in enumerate(self.item_ids, start=1):
                 if self._cancel.is_set():
                     break
                 meta = library.load(item_id)
@@ -163,6 +167,8 @@ class Phase:
                         self.error = f"stopped after {failures} consecutive failures"
                         self._log(self.error)
                         break
+                self.current = None
+                self._rest_between_batches(attempted)
         finally:
             self.current = None
             self.finished = int(time.time())
@@ -181,7 +187,36 @@ class Phase:
             "completed": len(self.done_ids),
             "progress": (self._encoder.progress if self._encoder else self.progress),
             "speed": (self._encoder.speed if self._encoder else self.speed),
+            "resting": self.resting,
+            "rest_left": self.rest_left,
         }
+
+    def _rest_between_batches(self, attempted):
+        """Idle for a while every N files so a long run doesn't cook the machine.
+
+        Encoding thousands of clips back to back pins the GPU and CPU for hours;
+        on a laptop that means sustained heat and throttling. Pausing between
+        batches lets everything cool down. Off unless the caller asks for it.
+        """
+        size = getattr(self.opts, "batch_size", 0) or 0
+        secs = getattr(self.opts, "rest_seconds", 0) or 0
+        if size <= 0 or secs <= 0:
+            return
+        if attempted % size or attempted >= len(self.item_ids):
+            return                      # mid-batch, or nothing left to do
+        self._log(f"resting {secs}s after {attempted} files")
+        deadline = time.time() + secs
+        self.resting = True
+        try:
+            while not self._cancel.is_set():
+                left = deadline - time.time()
+                if left <= 0:
+                    break
+                self.rest_left = int(left) + 1
+                self._cancel.wait(min(1.0, left))
+        finally:
+            self.resting = False
+            self.rest_left = 0
 
 
 class PullPhase(Phase):

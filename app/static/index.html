@@ -283,18 +283,38 @@ label.chk { display: inline-flex; align-items: center; gap: 7px; font-size: 13px
 @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
 .mhead { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .mtitle { font-size: 16px; font-weight: 600; letter-spacing: -.1px; }
+/* Explicit 1fr tracks, not the implicit auto ones: an auto-sized row is
+   content-sized, so a percentage height on the child resolves against nothing
+   and a portrait clip sizes itself from its own intrinsic height instead of
+   the stage. */
 .stage { flex: 1; min-height: 0; display: grid; place-items: center; padding: 10px;
+         grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr);
          background: #000; border-radius: var(--r-lg); overflow: hidden; position: relative;
          border: 1px solid var(--border-default); }
-/* slider-overlay compare */
-.cmpwrap { position: relative; display: inline-block; max-width: 100%; max-height: 100%;
-           line-height: 0; }
-.cmpwrap video { max-width: 100%; max-height: 100%; display: block; }
-.cmpwrap video.top { position: absolute; inset: 0; width: 100%; height: 100%; }
-/* side-by-side: two equal panes that fit inside the stage */
-.cmpwrap.side { display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
-                width: 100%; height: 100%; align-items: center; }
-.cmpwrap.side video { width: 100%; height: 100%; object-fit: contain; }
+/* slider-overlay compare.
+   The wrapper carries the clip's own aspect ratio (--cmp-ar, set from the
+   video's real dimensions once metadata loads) and is clamped on both axes, so
+   a portrait clip is bounded by the stage's height instead of overflowing it
+   and being cropped. Both videos then fill the same box, which is also what
+   keeps the split line aligned with the pixels underneath it. */
+.cmpwrap { position: relative; line-height: 0;
+           aspect-ratio: var(--cmp-ar, 16 / 9);
+           height: 100%; width: auto; max-width: 100%; max-height: 100%; }
+.cmpwrap video { position: absolute; inset: 0; width: 100%; height: 100%;
+                 object-fit: contain; display: block; }
+/* side-by-side: two equal panes that fit inside the stage. The row is an
+   explicit 1fr for the same reason as .stage above - an auto row leaves the
+   videos' height:100% unresolved, so a portrait clip grows to its intrinsic
+   height and spills out of the wrapper. */
+.cmpwrap.side { display: grid; grid-template-columns: 1fr 1fr;
+                grid-template-rows: minmax(0, 1fr); gap: 8px;
+                aspect-ratio: auto; width: 100%; height: 100%; align-items: center; }
+.cmpwrap.side video { position: static; width: 100%; height: 100%; min-height: 0;
+                      object-fit: contain; }
+/* DOM order is compressed-then-original, because split mode overlays the
+   original on top. Pin the columns so each pane matches its label. */
+.cmpwrap.side #vA { grid-column: 1; }
+.cmpwrap.side #vB { grid-column: 2; }
 .cmpline { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(255,255,255,.9);
            box-shadow: 0 0 12px rgba(0,0,0,.8); pointer-events: none; }
 .cmphandle { position: absolute; top: 50%; left: 50%; width: 38px; height: 38px;
@@ -508,6 +528,16 @@ details[open] summary::before { content: "▾ "; }
           <label class="f">Audio
             <select id="abr"><option>96k</option><option selected>128k</option>
               <option>192k</option></select></label>
+          <label class="f">Rest every
+            <span class="row" style="gap:6px">
+              <input type="number" id="batchSize" min="0" max="1000" value="0" style="width:62px">
+              <span class="muted" style="font-size:12px">files</span></span>
+            <span class="muted" style="font-size:11px">0 = run straight through</span></label>
+          <label class="f">Rest for
+            <span class="row" style="gap:6px">
+              <input type="number" id="restSecs" min="0" max="3600" value="120" style="width:62px">
+              <span class="muted" style="font-size:12px">seconds</span></span>
+            <span class="muted" style="font-size:11px">lets the GPU cool on long runs</span></label>
         </div>
       </details>
       <div class="row" style="margin-top:18px">
@@ -841,7 +871,8 @@ function setProfile(p) {
 async function startEncode() {
   try {
     await postJSON('/api/phases/encode', {profile, crf:+$('crf').value, preset:$('preset').value,
-      hw_quality:+$('vtq').value, max_long_edge:+$('maxEdge').value, audio_bitrate:$('abr').value});
+      hw_quality:+$('vtq').value, max_long_edge:+$('maxEdge').value, audio_bitrate:$('abr').value,
+      batch_size:+$('batchSize').value, rest_seconds:+$('restSecs').value});
     pollPhase();
   } catch (e) { toast(e.message, true); }
 }
@@ -868,7 +899,7 @@ async function pollPhase() {
   if (show) {
     const labels = {pull:'Pulling from phone', encode:'Compressing', push:'Pushing to phone'};
     const badge = $('phKind').parentElement;
-    $('phKind').textContent = running ? (labels[p.kind] || p.kind)
+    $('phKind').textContent = running ? (p.resting ? 'Resting' : (labels[p.kind] || p.kind))
       : p.state === 'done' ? 'Finished' : p.state;
     badge.className = 'badge ' + (running ? 'info' : p.state === 'done' ? 'ok' : 'off');
     badge.querySelector('.dot').classList.toggle('live', running);
@@ -885,9 +916,9 @@ async function pollPhase() {
     const it = p.current_item;
     // Per-file detail: how far into this file, and how fast it's going.
     const filePct = p.progress > 0 ? `  ·  ${(p.progress*100).toFixed(0)}%` : '';
-    $('phCurrent').textContent = running
-      ? (it ? it.name + filePct + (p.speed ? `  ·  ${p.speed}` : '') : '')
-      : (p.error ? p.error : '');
+    $('phCurrent').textContent = !running ? (p.error ? p.error : '')
+      : p.resting ? `Letting the machine cool down — next batch in ${p.rest_left}s`
+      : (it ? it.name + filePct + (p.speed ? `  ·  ${p.speed}` : '') : '');
   }
   if (wasRunning && !running) {
     loadLibrary();
@@ -1017,6 +1048,13 @@ function openCompare(id) {
   $('mStats').textContent = pr.width ? `${pr.width}×${pr.height} · ${Math.round(pr.fps||0)}fps` : '';
   $('labAs').textContent = fmtSize(m.original_size);
   $('labBs').textContent = fmtSize(m.compressed_size);
+  // Fall back to the probed size until the real one arrives; rotation is baked
+  // into the pixels, so the element's own dimensions are the authority.
+  setCmpAspect(pr.width && pr.height ? pr.width / pr.height : 16 / 9);
+  vA().onloadedmetadata = () => {
+    if (vA().videoWidth && vA().videoHeight)
+      setCmpAspect(vA().videoWidth / vA().videoHeight);
+  };
   vA().src = `/api/media/${m.id}/original`;
   vB().src = `/api/media/${m.id}/compressed`;
   cmpPos = 50; setCmpMode(cmpMode); cmpAudio('A');
@@ -1039,6 +1077,9 @@ function openCompare(id) {
   vA().addEventListener('ended', () => { vB().pause(); $('cmpPlay').textContent = '↻ Replay'; },
                         {once: false});
 }
+function setCmpAspect(ar) {
+  if (ar > 0 && isFinite(ar)) $('cmpwrap').style.setProperty('--cmp-ar', ar);
+}
 function setCmpMode(mode) {
   cmpMode = mode;
   $('modeSplit').classList.toggle('on', mode === 'split');
@@ -1046,14 +1087,13 @@ function setCmpMode(mode) {
   const wrap = $('cmpwrap'), a = vA(), b = vB();
   if (mode === 'split') {
     wrap.classList.remove('side');
-    a.className = 'top';
     $('cmpline').style.display = '';
     $('labA').style.left = '12px'; $('labB').style.right = '12px'; $('labB').style.left = '';
     applySplit();
   } else {
     // side-by-side: equal panes, original left / compressed right
     wrap.classList.add('side');
-    a.className = ''; a.style.clipPath = 'none';
+    a.style.clipPath = 'none';
     $('cmpline').style.display = 'none';
     // pin each label to its own pane
     $('labA').style.left = '12px';
