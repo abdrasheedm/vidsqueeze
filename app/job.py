@@ -16,6 +16,86 @@ from .probe import probe
 
 DURATION_TOLERANCE_S = 1.0
 MAX_CONSECUTIVE_FAILURES = 3
+PROGRESS_POLL_S = 0.4
+COPY_CHUNK = 4 * 1024 * 1024
+
+
+def _rate(done, t0):
+    elapsed = time.time() - t0
+    return f"{done / elapsed / 1024**2:.1f} MB/s" if elapsed >= 1.0 else ""
+
+
+def copy_with_progress(src, dst, phase):
+    """shutil.copy2 that reports progress as it goes.
+
+    Not implemented by watching the file grow: shutil's fast path on Windows
+    preallocates the destination to its final size, so the file is 100% of its
+    eventual length from the first moment. Copying in chunks lets us count the
+    bytes actually written.
+    """
+    total = max(os.path.getsize(src), 1)
+    done = 0
+    t0 = time.time()
+    phase.progress = 0.0
+    phase.speed = ""
+    try:
+        with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
+            while True:
+                chunk = fsrc.read(COPY_CHUNK)
+                if not chunk:
+                    break
+                fdst.write(chunk)
+                done += len(chunk)
+                phase.progress = min(done / total, 1.0)
+                phase.speed = _rate(done, t0)
+        shutil.copystat(src, dst)
+    finally:
+        # Zero it as the completed counter ticks up, so the bar stays smooth.
+        phase.progress = 0.0
+        phase.speed = ""
+
+
+class _CopyProgress:
+    """Report progress for a copy performed by an external process (adb).
+
+    adb doesn't report progress in any parseable way, but the file it is
+    writing does: comparing its size against the size we already know from the
+    phone listing gives a live percentage and transfer rate.
+    """
+
+    def __init__(self, phase, path, expected_bytes):
+        self.phase = phase
+        self.path = path
+        self.expected = max(int(expected_bytes or 0), 1)
+        self._stop = threading.Event()
+        self._thread = None
+        self._t0 = 0.0
+
+    def __enter__(self):
+        self._t0 = time.time()
+        self.phase.progress = 0.0
+        self.phase.speed = ""
+        self._thread = threading.Thread(target=self._watch, daemon=True)
+        self._thread.start()
+        return self
+
+    def _watch(self):
+        while not self._stop.wait(PROGRESS_POLL_S):
+            try:
+                done = os.path.getsize(self.path)
+            except OSError:
+                continue          # not created yet, or momentarily unreadable
+            self.phase.progress = min(done / self.expected, 1.0)
+            self.phase.speed = _rate(done, self._t0)
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+        # Zero it as the completed counter ticks up, so the bar stays smooth.
+        self.phase.progress = 0.0
+        self.phase.speed = ""
+        return False
 
 
 class Phase:
@@ -34,6 +114,10 @@ class Phase:
         self.finished = None
         self.current = None
         self.done_ids = []
+        # Progress within the file being handled right now (0..1), for phases
+        # that aren't running an encoder.
+        self.progress = 0.0
+        self.speed = ""
         self.log_path = os.path.join(LOG_DIR, f"{self.id}-{self.kind}.log")
         self._cancel = threading.Event()
         self._encoder = None
@@ -95,8 +179,8 @@ class Phase:
             "current": self.current,
             "total": len(self.item_ids),
             "completed": len(self.done_ids),
-            "progress": (self._encoder.progress if self._encoder else 0.0),
-            "speed": (self._encoder.speed if self._encoder else ""),
+            "progress": (self._encoder.progress if self._encoder else self.progress),
+            "speed": (self._encoder.speed if self._encoder else self.speed),
         }
 
 
@@ -112,11 +196,12 @@ class PullPhase(Phase):
         library.update(item_id, state="pulling", error=None)
 
         if meta["source"] == "phone":
-            phone.pull(meta["source_path"], dest)
+            with _CopyProgress(self, dest, meta["original_size"]):
+                phone.pull(meta["source_path"], dest)
         else:
-            # Folder mode: copy in so the original is preserved even if the user
-            # moves or edits the source afterwards.
-            shutil.copy2(meta["source_path"], dest)
+            # Folder mode: copy in so the original is preserved even if the
+            # user moves or edits the source afterwards.
+            copy_with_progress(meta["source_path"], dest, self)
 
         if not os.path.exists(dest):
             raise RuntimeError("pull produced no file")
@@ -209,7 +294,7 @@ class PushPhase(Phase):
             rel = meta.get("rel_path") or meta["name"]
             dest = os.path.join(self.output_dir, rel)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            shutil.copy2(src, dest)
+            copy_with_progress(src, dest, self)
             os.utime(dest, (meta["mtime"], meta["mtime"]))
             dest_desc = dest
 

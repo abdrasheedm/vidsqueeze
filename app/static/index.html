@@ -875,17 +875,18 @@ async function pollPhase() {
 
     const pct = p.total ? 100*p.completed/p.total : 0;
     const bar = $('phBar');
-    // blend the current file's encode progress into the overall bar
-    const shown = (p.kind === 'encode' && running && p.total)
-      ? pct + (p.progress * 100 / p.total) : pct;
-    bar.classList.toggle('indet', running && p.kind !== 'encode' && !p.total);
+    // blend the current file's own progress into the overall bar
+    const shown = (running && p.total) ? pct + (p.progress * 100 / p.total) : pct;
+    bar.classList.toggle('indet', running && !p.total);
     bar.style.width = (running ? shown : 100) + '%';
     $('phPct').textContent = running ? shown.toFixed(0) + '%' : '';
     $('phCancel').classList.toggle('hidden', !running);
     $('phCount').textContent = `${p.completed} of ${p.total} files`;
     const it = p.current_item;
+    // Per-file detail: how far into this file, and how fast it's going.
+    const filePct = p.progress > 0 ? `  ·  ${(p.progress*100).toFixed(0)}%` : '';
     $('phCurrent').textContent = running
-      ? (it ? it.name + (p.kind === 'encode' && p.speed ? `  ·  ${p.speed}` : '') : '')
+      ? (it ? it.name + filePct + (p.speed ? `  ·  ${p.speed}` : '') : '')
       : (p.error ? p.error : '');
   }
   if (wasRunning && !running) {
