@@ -11,8 +11,8 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from . import hwaccel, ledger, library, osutil, phone, thumbs
-from .config import (COMPUTER, LIBRARY_DIR, PIDFILE, VIDEO_EXTENSIONS,
-                     ensure_data_dirs, missing_tools)
+from .config import (API_VERSION, COMPUTER, LIBRARY_DIR, PIDFILE,
+                     VIDEO_EXTENSIONS, ensure_data_dirs, missing_tools)
 from .encoder import EncodeOptions
 from .job import EncodePhase, PullPhase, PushPhase, check_disk_space
 
@@ -80,6 +80,7 @@ def device():
 def system():
     """What this machine can do — drives the encoder-profile labels in the UI."""
     return {
+        "api_version": API_VERSION,
         "os": platform.system(),
         "os_release": platform.release(),
         "machine": platform.machine(),

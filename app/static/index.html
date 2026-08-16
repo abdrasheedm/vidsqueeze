@@ -377,6 +377,9 @@ details[open] summary::before { content: "▾ "; }
 </style>
 </head>
 <body>
+<div id="staleBanner" class="hidden"
+     style="background:var(--danger); color:#2d0707; padding:10px 16px; font-size:13px;
+            font-weight:600; text-align:center"></div>
 <div class="wrap">
 
   <div class="masthead">
@@ -1253,10 +1256,24 @@ document.addEventListener('keydown', e => {
 
 // Which encoder this machine really has decides several labels, so load it
 // before the first setProfile() paints the hint.
+// Bump alongside API_VERSION in config.py whenever this page needs something
+// the server did not previously provide.
+const NEEDS_API_VERSION = 2;
+
 async function loadSystem() {
   try {
     sysInfo = await (await fetch('/api/system')).json();
   } catch (e) { return; }
+  // This page is read from disk per request, so a server left running from
+  // before an update serves new markup on old code. Say so plainly rather than
+  // letting buttons quietly do nothing.
+  if ((sysInfo.api_version || 0) < NEEDS_API_VERSION) {
+    const b = $('staleBanner');
+    b.textContent = 'This server is running older code than this page — '
+      + 'restart it (close the window and run run.bat again) or some buttons '
+      + 'will silently do nothing.';
+    b.classList.remove('hidden');
+  }
   document.querySelectorAll('.pcName').forEach(el => el.textContent = sysInfo.computer);
   const hw = sysInfo.hardware_encoder || {};
   $('pFastName').textContent = hw.available ? hw.label : 'software';

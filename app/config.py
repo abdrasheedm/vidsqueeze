@@ -39,6 +39,11 @@ VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".avi", ".3gp")
 HOST = "127.0.0.1"
 PORT = 8765
 
+# index.html is read from disk on every request, so a long-running server can
+# serve a newer page than the code it is running. The page checks this number
+# and warns instead of silently misbehaving. Bump it whenever the API changes.
+API_VERSION = 2
+
 # Stop ffmpeg/adb/exiftool from flashing a console window on Windows.
 if IS_WINDOWS:
     NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW}
