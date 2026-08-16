@@ -42,7 +42,7 @@ PORT = 8765
 # index.html is read from disk on every request, so a long-running server can
 # serve a newer page than the code it is running. The page checks this number
 # and warns instead of silently misbehaving. Bump it whenever the API changes.
-API_VERSION = 2
+API_VERSION = 3
 
 # Stop ffmpeg/adb/exiftool from flashing a console window on Windows.
 if IS_WINDOWS:

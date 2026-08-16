@@ -442,6 +442,7 @@ details[open] summary::before { content: "▾ "; }
     <div class="track"><div class="fill" id="phBar"></div></div>
     <div class="row" style="margin-top:10px">
       <span class="muted num" id="phCount"></span>
+      <span class="muted num grow" id="phEta" style="text-align:right"></span>
     </div>
   </div>
 
@@ -644,6 +645,16 @@ const fmtSize = b => b == null ? '–' : b >= GB ? (b/GB).toFixed(2)+' GB' : (b/
 const fmtDate = t => new Date(t*1000).toLocaleDateString(undefined,
   {year:'numeric', month:'short', day:'numeric'});
 const fmtTime = s => isFinite(s) ? `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}` : '0:00';
+// Coarse, human-scale duration for the ETA. Deliberately not second-accurate:
+// the estimate is not that good, and showing "1h 47m 12s" would imply it is.
+function fmtEta(s) {
+  if (s == null || !isFinite(s) || s < 0) return '';
+  if (s < 60) return 'under a minute';
+  const m = Math.round(s / 60);
+  if (m < 60) return `about ${m} min`;
+  const h = Math.floor(m / 60), rem = m % 60;
+  return rem ? `about ${h}h ${rem}m` : `about ${h}h`;
+}
 const esc = s => String(s).replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -927,6 +938,8 @@ async function pollPhase() {
     $('phPct').textContent = running ? shown.toFixed(0) + '%' : '';
     $('phCancel').classList.toggle('hidden', !running);
     $('phCount').textContent = `${p.completed} of ${p.total} files`;
+    const eta = fmtEta(p.eta);
+    $('phEta').textContent = running && !p.resting && eta ? `${eta} left` : '';
     const it = p.current_item;
     // Per-file detail: how far into this file, and how fast it's going.
     const filePct = p.progress > 0 ? `  ·  ${(p.progress*100).toFixed(0)}%` : '';
@@ -1258,7 +1271,7 @@ document.addEventListener('keydown', e => {
 // before the first setProfile() paints the hint.
 // Bump alongside API_VERSION in config.py whenever this page needs something
 // the server did not previously provide.
-const NEEDS_API_VERSION = 2;
+const NEEDS_API_VERSION = 3;
 
 async function loadSystem() {
   try {

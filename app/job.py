@@ -103,6 +103,14 @@ class Phase:
 
     kind = "phase"
 
+    # Fixed wall-clock cost per item, on top of the size-dependent part:
+    # spawning adb, stat-ing the remote file, writing meta.json. Measured over a
+    # real 340-file / 20.4 GB pull: 820s total against ~565s of actual transfer
+    # at the observed 37 MB/s, so roughly 0.75s each - a third of the run.
+    # Ignoring it makes a batch of many small files finish far later than the
+    # estimate promised.
+    item_overhead_s = 0.75
+
     def __init__(self, item_ids, opts=None):
         ensure_data_dirs()
         self.id = time.strftime("%Y%m%d-%H%M%S")
@@ -122,6 +130,14 @@ class Phase:
         # looking stalled.
         self.resting = False
         self.rest_left = 0
+        # Work accounting for the ETA. Counting files would be badly wrong when
+        # they vary from 2 MB to 900 MB, so each phase weights an item by
+        # whatever actually predicts its cost - see _weight().
+        self._weights = {}
+        self._total_weight = 0.0
+        self._done_weight = 0.0
+        self._attempted_items = 0
+        self._rested_seconds = 0.0
         self.log_path = os.path.join(LOG_DIR, f"{self.id}-{self.kind}.log")
         self._cancel = threading.Event()
         self._encoder = None
@@ -137,12 +153,60 @@ class Phase:
             if self._encoder:
                 self._encoder.cancel()
 
+    def _weight(self, meta):
+        """Cost of one item, in whatever unit predicts its time best.
+
+        Copying is bandwidth-bound, so bytes. EncodePhase overrides this.
+        """
+        return max(float(meta.get("original_size") or 0), 1.0)
+
+    def _prepare_weights(self):
+        for item_id in self.item_ids:
+            meta = library.load(item_id)
+            if meta:
+                self._weights[item_id] = max(self._weight(meta), 1e-6)
+        self._total_weight = sum(self._weights.values())
+
+    def eta_seconds(self):
+        """Seconds left at the rate achieved so far, or None if not yet knowable.
+
+        Time is modelled as (work / rate) + (items * fixed overhead) rather than
+        a single average, because the two scale differently: a batch of 300
+        small clips pays the per-item cost 300 times while moving very few
+        bytes. The rate is measured live; the overhead is a per-phase constant.
+
+        Rest periods are excluded, so pausing between batches doesn't drag the
+        measured rate down.
+        """
+        if self.state != "running" or self._total_weight <= 0:
+            return None
+        progress = self._encoder.progress if self._encoder else self.progress
+        done = self._done_weight + (self._weights.get(self.current, 0.0)
+                                    * min(max(progress, 0.0), 1.0))
+        elapsed = time.time() - self.started - self._rested_seconds
+        # The item in flight has already paid its overhead.
+        working = elapsed - self._attempted_items * self.item_overhead_s
+        # One item's timing is mostly noise - a first guess drawn from it came
+        # out ~2x wrong in testing, then settled within a second once a couple
+        # of items had finished. Better to show nothing for those few seconds
+        # than a number that visibly lurches.
+        settled = len(self.done_ids) >= 2 or working >= 8.0
+        if done <= 0 or working < 2.0 or not settled:
+            return None
+        rate = done / working
+        if rate <= 0:
+            return None
+        remaining_items = max(len(self.item_ids) - self._attempted_items, 0)
+        return int(max(self._total_weight - done, 0.0) / rate
+                   + remaining_items * self.item_overhead_s)
+
     def _log(self, msg):
         with open(self.log_path, "a", encoding="utf-8", errors="replace") as f:
             f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
 
     def _run(self):
         failures = 0
+        self._prepare_weights()
         try:
             for attempted, item_id in enumerate(self.item_ids, start=1):
                 if self._cancel.is_set():
@@ -151,6 +215,7 @@ class Phase:
                 if meta is None:
                     continue
                 self.current = item_id
+                self._attempted_items += 1
                 try:
                     self.handle(meta)
                     self.done_ids.append(item_id)
@@ -167,6 +232,10 @@ class Phase:
                         self.error = f"stopped after {failures} consecutive failures"
                         self._log(self.error)
                         break
+                finally:
+                    # Count attempted work whatever the outcome, or a failure
+                    # would leave the estimate permanently short.
+                    self._done_weight += self._weights.get(item_id, 0.0)
                 self.current = None
                 self._rest_between_batches(attempted)
         finally:
@@ -189,6 +258,7 @@ class Phase:
             "speed": (self._encoder.speed if self._encoder else self.speed),
             "resting": self.resting,
             "rest_left": self.rest_left,
+            "eta": self.eta_seconds(),
         }
 
     def _rest_between_batches(self, attempted):
@@ -205,7 +275,8 @@ class Phase:
         if attempted % size or attempted >= len(self.item_ids):
             return                      # mid-batch, or nothing left to do
         self._log(f"resting {secs}s after {attempted} files")
-        deadline = time.time() + secs
+        started_rest = time.time()
+        deadline = started_rest + secs
         self.resting = True
         try:
             while not self._cancel.is_set():
@@ -217,6 +288,7 @@ class Phase:
         finally:
             self.resting = False
             self.rest_left = 0
+            self._rested_seconds += time.time() - started_rest
 
 
 class PullPhase(Phase):
@@ -258,6 +330,27 @@ class EncodePhase(Phase):
 
     kind = "encode"
     resume_state = "pulled"
+
+    # Rough seconds of video per byte, used only when a clip was never probed.
+    _FALLBACK_BYTES_PER_SECOND = 6_000_000
+
+    # Higher than a copy: two ffprobe runs, ffmpeg start-up and an exiftool pass
+    # per item. Fitting wall time against duration over 1-16s clips gave
+    # wall = 0.123 * duration + 1.93s on this machine.
+    item_overhead_s = 2.0
+
+    def _weight(self, meta):
+        """Encoding cost tracks how long the video runs, not how big it is.
+
+        A 60s 4K clip and a 60s 1080p clip differ in size several-fold but take
+        far more similar times to encode, since the work is per frame. Duration
+        comes from the probe done at pull time; the byte estimate is only a
+        fallback for items that predate it.
+        """
+        duration = float((meta.get("probe") or {}).get("duration") or 0)
+        if duration > 0:
+            return duration
+        return max(float(meta.get("original_size") or 0), 1.0) / self._FALLBACK_BYTES_PER_SECOND
 
     def handle(self, meta):
         item_id = meta["id"]
@@ -306,6 +399,11 @@ class PushPhase(Phase):
     def __init__(self, item_ids, opts=None, output_dir=None):
         super().__init__(item_ids, opts)
         self.output_dir = output_dir
+
+    def _weight(self, meta):
+        """Pushing sends the compressed file, so that is what costs time."""
+        return max(float(meta.get("compressed_size")
+                         or meta.get("original_size") or 0), 1.0)
 
     def handle(self, meta):
         item_id = meta["id"]
