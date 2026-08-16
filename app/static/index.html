@@ -1,0 +1,1140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VidSqueeze</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* ---- surfaces: depth via a ladder + hairlines, not shadows ---- */
+  --bg-canvas:   #08090b;
+  --bg-surface:  #0e1013;
+  --bg-elevated: #14171b;
+  --bg-overlay:  #1a1e23;
+  --bg-input:    #0b0d10;
+
+  --border-subtle:  rgba(255,255,255,.06);
+  --border-default: #22262c;
+  --border-strong:  #32373f;
+
+  --text-primary:   #f2f4f7;
+  --text-secondary: #c8cdd6;
+  --text-muted:     #8b929e;
+  --text-faint:     #5c626c;
+
+  --accent:       #5b8cff;
+  --accent-hover: #7ba2ff;
+  --success:      #59d499;
+  --warning:      #ffc533;
+  --danger:       #ff6161;
+
+  --accent-soft:  rgba(91,140,255,.15);
+  --success-soft: rgba(89,212,153,.15);
+  --warning-soft: rgba(255,197,51,.15);
+  --danger-soft:  rgba(255,97,97,.15);
+
+  --r-xs: 4px; --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-xl: 16px; --r-full: 9999px;
+
+  --elev-1: 0 1px 2px rgba(0,0,0,.3);
+  --elev-2: 0 4px 12px rgba(0,0,0,.4);
+  --elev-3: 0 16px 48px rgba(0,0,0,.6);
+  --lit: inset 0 1px 0 rgba(255,255,255,.06);
+
+  --ease-out: cubic-bezier(.16,1,.3,1);
+  --dur-fast: 150ms; --dur-normal: 200ms; --dur-slow: 300ms;
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg-canvas); color: var(--text-primary);
+  font: 500 14px/1.5 var(--font-sans);
+  font-feature-settings: "calt","kern","liga";
+  -webkit-font-smoothing: antialiased;
+}
+/* atmospheric gradient + noise — kills banding, photographs well */
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(900px 500px at 12% -8%, rgba(91,140,255,.10), transparent 60%),
+    radial-gradient(700px 420px at 92% 4%, rgba(89,212,153,.06), transparent 60%);
+}
+body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: .022;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.wrap { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padding: 28px 24px 80px; }
+
+/* ---------- type ---------- */
+h1 { font-size: 28px; font-weight: 600; letter-spacing: -.6px; margin: 0; line-height: 1.2; }
+h2 { font-size: 11px; font-weight: 600; letter-spacing: .88px; text-transform: uppercase;
+     color: var(--text-muted); margin: 0 0 14px; }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--text-muted); font-size: 13px; font-weight: 400; }
+.faint { color: var(--text-faint); }
+
+/* ---------- layout ---------- */
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; min-width: 0; }
+.card {
+  background: linear-gradient(180deg, rgba(255,255,255,.03), transparent 42%), var(--bg-surface);
+  border: 1px solid var(--border-default); border-radius: var(--r-lg);
+  box-shadow: var(--elev-1), var(--lit);
+  padding: 20px 22px; margin-top: 16px;
+}
+
+/* ---------- header ---------- */
+.masthead { display: flex; align-items: center; gap: 14px; margin-bottom: 4px; }
+.logo { width: 42px; height: 42px; flex: none; }
+.logo .bar { transform-origin: center; }
+.tagline { color: var(--text-muted); font-size: 13px; font-weight: 400; margin-top: 2px; }
+
+/* ---------- status strip ---------- */
+.statusbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.badge {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px;
+  border-radius: var(--r-full); font-size: 12px; font-weight: 600; letter-spacing: .1px;
+}
+.badge.ok   { background: var(--success-soft); color: var(--success); }
+.badge.warn { background: var(--warning-soft); color: var(--warning); }
+.badge.off  { background: var(--danger-soft);  color: var(--danger); }
+.badge.info { background: var(--accent-soft);  color: var(--accent); }
+.dot { width: 6px; height: 6px; border-radius: var(--r-full); background: currentColor; }
+.dot.live { animation: pulse 2s var(--ease-out) infinite; }
+@keyframes pulse {
+  0%,100% { opacity: 1; box-shadow: 0 0 0 0 currentColor; }
+  50% { opacity: .65; box-shadow: 0 0 0 4px transparent; }
+}
+
+/* ---------- buttons ---------- */
+button {
+  font-family: var(--font-sans); font-size: 14px; font-weight: 600; cursor: pointer;
+  background: var(--accent); color: #06101f; border: 1px solid transparent;
+  border-radius: var(--r-md); padding: 0 16px; height: 36px;
+  transition: background-color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              transform 80ms var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+button:hover:not(:disabled) { background: var(--accent-hover); }
+button:active:not(:disabled) { transform: scale(.98); }
+button:disabled { opacity: .38; cursor: default; }
+button.ghost {
+  background: var(--bg-elevated); color: var(--text-secondary); border-color: var(--border-default);
+}
+button.ghost:hover:not(:disabled) { background: var(--bg-overlay); border-color: var(--border-strong);
+  color: var(--text-primary); }
+button.good { background: var(--success); color: #04231a; }
+button.good:hover:not(:disabled) { background: #6fe0a9; }
+button.danger { background: var(--danger); color: #2d0707; }
+button.danger:hover:not(:disabled) { background: #ff7d7d; }
+button.sm { height: 30px; padding: 0 11px; font-size: 13px; }
+button.icon { width: 30px; padding: 0; }
+
+input, select {
+  font-family: var(--font-sans); font-size: 14px; font-weight: 500;
+  background: var(--bg-input); border: 1px solid var(--border-default); color: var(--text-primary);
+  border-radius: var(--r-md); padding: 0 11px; height: 36px;
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+input:focus, select:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(91,140,255,.18);
+}
+input[type=date] { color-scheme: dark; }
+input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+input[type=range] { accent-color: var(--accent); height: auto; padding: 0; background: none; border: 0; }
+label.f { display: flex; flex-direction: column; gap: 5px; font-size: 11px; font-weight: 600;
+          letter-spacing: .5px; text-transform: uppercase; color: var(--text-muted); }
+label.chk { display: inline-flex; align-items: center; gap: 7px; font-size: 13px;
+            font-weight: 500; color: var(--text-secondary); cursor: pointer; }
+
+/* ---------- segmented ---------- */
+.seg { display: inline-flex; background: var(--bg-input); border: 1px solid var(--border-default);
+       border-radius: var(--r-md); padding: 3px; gap: 3px; }
+.seg button {
+  background: transparent; color: var(--text-muted); border: 0; height: 30px;
+  border-radius: var(--r-sm); font-weight: 500;
+}
+.seg button:hover { color: var(--text-primary); background: var(--bg-elevated); }
+.seg button.on { background: var(--accent); color: #06101f; font-weight: 600; }
+.seg button.on:hover { background: var(--accent); }
+
+/* ---------- steps / tabs ---------- */
+.steps { display: flex; gap: 6px; margin: 22px 0 0; border-bottom: 1px solid var(--border-default); }
+.steps button {
+  background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  color: var(--text-faint); height: 42px; padding: 0 16px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 9px;
+}
+.steps button:hover { color: var(--text-secondary); background: none; }
+.steps button.on { color: var(--text-primary); border-bottom-color: var(--accent); }
+.stepnum {
+  width: 20px; height: 20px; border-radius: var(--r-full); background: var(--bg-elevated);
+  border: 1px solid var(--border-default); font-size: 11px; font-weight: 600;
+  display: grid; place-items: center; color: var(--text-muted);
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.steps button.on .stepnum { background: var(--accent); border-color: var(--accent); color: #06101f; }
+.stepcount { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: var(--r-full);
+             background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- stats ---------- */
+.statgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 12px; }
+.stat { background: var(--bg-input); border: 1px solid var(--border-subtle);
+        border-radius: var(--r-md); padding: 13px 15px; }
+.stat b { display: block; font-size: 22px; font-weight: 600; letter-spacing: -.5px;
+          font-variant-numeric: tabular-nums; line-height: 1.2; }
+.stat span { color: var(--text-muted); font-size: 11px; font-weight: 500;
+             letter-spacing: .4px; text-transform: uppercase; }
+.stat.hero b { font-size: 34px; letter-spacing: -1px; color: var(--success); }
+
+/* ---------- progress ---------- */
+.track { height: 4px; background: var(--bg-input); border-radius: var(--r-full); overflow: hidden;
+         border: 1px solid var(--border-subtle); }
+.fill { height: 100%; background: linear-gradient(90deg, var(--accent), #8fb4ff);
+        border-radius: var(--r-full); width: 0;
+        box-shadow: 0 0 10px rgba(91,140,255,.65);
+        transition: width var(--dur-slow) var(--ease-out); }
+.fill.indet { width: 35% !important; animation: slide 1.4s var(--ease-out) infinite; }
+@keyframes slide { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+
+/* ---------- file list ---------- */
+.listbox { border: 1px solid var(--border-default); border-radius: var(--r-md);
+           overflow: hidden; margin-top: 14px; background: var(--bg-input); }
+.listscroll { max-height: 440px; overflow-y: auto; }
+.fgroup + .fgroup { border-top: 1px solid var(--border-subtle); }
+.fhead { display: flex; align-items: center; gap: 11px; padding: 10px 14px;
+         background: var(--bg-surface); cursor: pointer; user-select: none;
+         position: sticky; top: 0; z-index: 2;
+         transition: background var(--dur-fast) var(--ease-out); }
+.fhead:hover { background: var(--bg-elevated); }
+.caret { color: var(--text-faint); font-size: 9px; width: 10px;
+         transition: transform var(--dur-fast) var(--ease-out); }
+.caret.open { transform: rotate(90deg); }
+.fname { font-size: 13px; font-weight: 600; }
+.fpath { font-size: 12px; color: var(--text-faint); font-weight: 400; }
+.fmeta { margin-left: auto; font-size: 12px; color: var(--text-muted); font-weight: 500;
+         font-variant-numeric: tabular-nums; }
+.frow { display: flex; align-items: center; gap: 11px; padding: 6px 14px; height: 48px;
+        border-top: 1px solid var(--border-subtle); cursor: pointer;
+        transition: background 100ms var(--ease-out); }
+.frow:hover { background: var(--bg-elevated); }
+.frow.sel { background: rgba(91,140,255,.10); }
+.frow .th { width: 64px; height: 36px; border-radius: var(--r-xs); object-fit: cover;
+            background: var(--bg-canvas); flex: none; display: grid; place-items: center;
+            color: var(--text-faint); font-size: 14px; border: 1px solid var(--border-subtle); }
+.frow .nm { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; }
+.frow .dt { font-size: 12px; color: var(--text-faint); width: 96px; flex: none; font-weight: 400; }
+.frow .sz { font-size: 13px; font-variant-numeric: tabular-nums; width: 84px; flex: none;
+            text-align: right; color: var(--text-secondary); }
+.frow .st { width: 96px; flex: none; text-align: right; }
+
+/* skeleton shimmer */
+.skel { height: 48px; border-top: 1px solid var(--border-subtle);
+        background: linear-gradient(90deg, var(--bg-input) 25%, var(--bg-elevated) 37%, var(--bg-input) 63%);
+        background-size: 400% 100%; animation: shim 1.5s linear infinite; }
+@keyframes shim { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+
+/* ---------- review cards ---------- */
+.revgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px,1fr)); gap: 14px; }
+.rev { background: var(--bg-input); border: 1px solid var(--border-default);
+       border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--lit);
+       transition: border-color var(--dur-normal) var(--ease-out),
+                   transform var(--dur-normal) var(--ease-out); }
+.rev:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.rev.approved { border-color: rgba(89,212,153,.45); }
+.rev.rejected { opacity: .5; }
+.revthumb { position: relative; aspect-ratio: 16/9; background: var(--bg-canvas);
+            display: grid; place-items: center; cursor: pointer; overflow: hidden; }
+.revthumb img { width: 100%; height: 100%; object-fit: cover; display: block;
+                transition: transform var(--dur-slow) var(--ease-out); }
+.rev:hover .revthumb img { transform: scale(1.04); }
+.playover { position: absolute; inset: 0; display: grid; place-items: center;
+            background: rgba(8,9,11,.35); opacity: 0;
+            transition: opacity var(--dur-normal) var(--ease-out); }
+.rev:hover .playover { opacity: 1; }
+.playbtn { width: 46px; height: 46px; border-radius: var(--r-full);
+           background: rgba(20,23,27,.75); backdrop-filter: blur(8px) saturate(180%);
+           border: 1px solid rgba(255,255,255,.16); display: grid; place-items: center;
+           color: #fff; font-size: 15px; }
+.savetag { position: absolute; top: 9px; right: 9px; padding: 3px 9px; border-radius: var(--r-full);
+           background: rgba(6,20,14,.82); backdrop-filter: blur(8px); color: var(--success);
+           font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+           border: 1px solid rgba(89,212,153,.3); }
+.revbody { padding: 12px 14px; }
+.revname { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis;
+           white-space: nowrap; }
+.revsize { font-size: 12px; color: var(--text-muted); margin: 5px 0 11px;
+           font-variant-numeric: tabular-nums; font-weight: 400; }
+.revsize s { color: var(--text-faint); text-decoration-color: var(--text-faint); }
+.revacts { display: flex; gap: 6px; }
+
+/* ---------- compare modal ---------- */
+#modal { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column;
+         padding: 18px 20px 20px; background: rgba(6,7,9,.86);
+         backdrop-filter: blur(22px) saturate(180%); animation: fadein var(--dur-normal) var(--ease-out); }
+@keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+.mhead { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.mtitle { font-size: 16px; font-weight: 600; letter-spacing: -.1px; }
+.stage { flex: 1; min-height: 0; display: grid; place-items: center; padding: 10px;
+         background: #000; border-radius: var(--r-lg); overflow: hidden; position: relative;
+         border: 1px solid var(--border-default); }
+/* slider-overlay compare */
+.cmpwrap { position: relative; display: inline-block; max-width: 100%; max-height: 100%;
+           line-height: 0; }
+.cmpwrap video { max-width: 100%; max-height: 100%; display: block; }
+.cmpwrap video.top { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* side-by-side: two equal panes that fit inside the stage */
+.cmpwrap.side { display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+                width: 100%; height: 100%; align-items: center; }
+.cmpwrap.side video { width: 100%; height: 100%; object-fit: contain; }
+.cmpline { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(255,255,255,.9);
+           box-shadow: 0 0 12px rgba(0,0,0,.8); pointer-events: none; }
+.cmphandle { position: absolute; top: 50%; left: 50%; width: 38px; height: 38px;
+             transform: translate(-50%,-50%); border-radius: var(--r-full);
+             background: rgba(20,23,27,.72); backdrop-filter: blur(10px) saturate(180%);
+             border: 1px solid rgba(255,255,255,.26); display: grid; place-items: center;
+             color: #fff; font-size: 13px; cursor: ew-resize; box-shadow: var(--elev-2); }
+.cmplabel { position: absolute; top: 12px; padding: 4px 10px; border-radius: var(--r-full);
+            background: rgba(10,12,15,.78); backdrop-filter: blur(8px);
+            border: 1px solid rgba(255,255,255,.12);
+            font-size: 11px; font-weight: 600; letter-spacing: .88px; text-transform: uppercase;
+            color: #fff; pointer-events: none; }
+.cmplabel .s { font-variant-numeric: tabular-nums; opacity: .72; margin-left: 6px;
+               letter-spacing: 0; text-transform: none; font-weight: 500; }
+.grabbing { cursor: ew-resize; user-select: none; }
+.mctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 14px; }
+#seek { flex: 1; min-width: 180px; }
+.tag { font-size: 11px; font-weight: 600; letter-spacing: .5px; padding: 3px 9px;
+       border-radius: var(--r-full); background: var(--bg-elevated); color: var(--text-muted); }
+.tag.on { background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- empty states ---------- */
+.empty { display: grid; place-items: center; gap: 12px; padding: 44px 20px; text-align: center; }
+.empty svg { opacity: .55; }
+.empty .t { font-size: 14px; font-weight: 600; color: var(--text-secondary); }
+.empty .d { font-size: 13px; color: var(--text-faint); font-weight: 400; max-width: 380px; }
+
+/* ---------- toast ---------- */
+#toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(12px);
+         background: var(--bg-overlay); border: 1px solid var(--border-strong);
+         box-shadow: var(--elev-3); color: var(--text-primary);
+         padding: 11px 18px; border-radius: var(--r-md); font-size: 13px; font-weight: 500;
+         opacity: 0; pointer-events: none; z-index: 100;
+         transition: opacity var(--dur-normal) var(--ease-out), transform var(--dur-normal) var(--ease-out); }
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.err { border-color: rgba(255,97,97,.5); }
+
+.hidden { display: none !important; }
+details summary { cursor: pointer; color: var(--text-muted); font-size: 13px;
+                  list-style: none; padding: 8px 0; font-weight: 500; }
+details summary::-webkit-details-marker { display: none; }
+details summary::before { content: "▸ "; color: var(--text-faint); }
+details[open] summary::before { content: "▾ "; }
+.advgrid { display: flex; gap: 20px; flex-wrap: wrap; padding-top: 6px; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: var(--r-full);
+                            border: 2px solid var(--bg-input); }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+                           transition-duration: .001ms !important; }
+}
+@media (max-width: 720px) {
+  .stage .cmpwrap { max-width: 100%; }
+  .frow .dt { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="masthead">
+    <svg class="logo" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="lg" x1="0" y1="0" x2="48" y2="48">
+          <stop offset="0" stop-color="#5b8cff"/><stop offset="1" stop-color="#59d499"/>
+        </linearGradient>
+      </defs>
+      <rect x="1.5" y="1.5" width="45" height="45" rx="11"
+            fill="#0e1013" stroke="url(#lg)" stroke-width="1.5"/>
+      <!-- bars squeezing inward = compression -->
+      <rect class="bar" x="11" y="13" width="4" height="22" rx="2" fill="#5b8cff">
+        <animate attributeName="height" values="22;10;22" dur="2.4s" repeatCount="indefinite"/>
+        <animate attributeName="y" values="13;19;13" dur="2.4s" repeatCount="indefinite"/>
+      </rect>
+      <rect class="bar" x="18.5" y="9" width="4" height="30" rx="2" fill="#7ba2ff" opacity=".85">
+        <animate attributeName="height" values="30;14;30" dur="2.4s" begin="-.3s" repeatCount="indefinite"/>
+        <animate attributeName="y" values="9;17;9" dur="2.4s" begin="-.3s" repeatCount="indefinite"/>
+      </rect>
+      <rect class="bar" x="26" y="11" width="4" height="26" rx="2" fill="#59d499" opacity=".9">
+        <animate attributeName="height" values="26;12;26" dur="2.4s" begin="-.6s" repeatCount="indefinite"/>
+        <animate attributeName="y" values="11;18;11" dur="2.4s" begin="-.6s" repeatCount="indefinite"/>
+      </rect>
+      <rect class="bar" x="33.5" y="15" width="4" height="18" rx="2" fill="#59d499" opacity=".65">
+        <animate attributeName="height" values="18;8;18" dur="2.4s" begin="-.9s" repeatCount="indefinite"/>
+        <animate attributeName="y" values="15;20;15" dur="2.4s" begin="-.9s" repeatCount="indefinite"/>
+      </rect>
+    </svg>
+    <div class="grow">
+      <h1>VidSqueeze</h1>
+      <div class="tagline">Shrink phone videos without touching a single byte of metadata</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="statusbar">
+      <span id="devBadge" class="badge off"><span class="dot"></span><span id="devLabel">checking…</span></span>
+      <span class="muted" id="devText"></span>
+      <div class="grow"></div>
+      <span class="muted num" id="macText"></span>
+      <button class="ghost sm" onclick="fetch('/api/open-library',{method:'POST'})">Open library</button>
+    </div>
+    <div class="muted hidden" id="devHelp" style="margin-top:12px;line-height:1.6">
+      Enable <b style="color:var(--text-secondary)">Developer options → USB debugging</b>
+      (Settings → About phone → Software information → tap <b style="color:var(--text-secondary)">Build number</b> 7×),
+      connect the cable and tap <b style="color:var(--text-secondary)">Allow</b>.
+      Or use <b style="color:var(--text-secondary)">Folder mode</b> — no phone needed.
+    </div>
+  </div>
+
+  <div class="card hidden" id="phaseCard">
+    <div class="row" style="margin-bottom:12px">
+      <span class="badge info"><span class="dot live"></span><span id="phKind">working</span></span>
+      <span class="muted grow" id="phCurrent"></span>
+      <span class="num" id="phPct" style="font-size:13px;font-weight:600"></span>
+      <button class="ghost sm" id="phCancel" onclick="cancelPhase()">Cancel</button>
+    </div>
+    <div class="track"><div class="fill" id="phBar"></div></div>
+    <div class="row" style="margin-top:10px">
+      <span class="muted num" id="phCount"></span>
+    </div>
+  </div>
+
+  <div class="steps">
+    <button id="tabSelect" class="on" onclick="showTab('select')">
+      <span class="stepnum">1</span> Select &amp; pull</button>
+    <button id="tabEncode" onclick="showTab('encode')">
+      <span class="stepnum">2</span> Compress <span id="cntPulled" class="stepcount hidden"></span></button>
+    <button id="tabReview" onclick="showTab('review')">
+      <span class="stepnum">3</span> Review &amp; approve <span id="cntReview" class="stepcount hidden"></span></button>
+  </div>
+
+  <!-- ===== 1 · SELECT ===== -->
+  <div id="paneSelect">
+    <div class="card">
+      <div class="row">
+        <div class="seg">
+          <button id="srcPhone" class="on" onclick="setSource('phone')">Phone</button>
+          <button id="srcFolder" onclick="setSource('folder')">Folder on Mac</button>
+        </div>
+        <div id="folderPick" class="row hidden grow">
+          <input id="folderPath" class="grow" placeholder="~/Movies/to-compress" style="min-width:220px">
+          <button class="ghost" onclick="loadVideos()">Scan</button>
+        </div>
+        <div id="phoneRefresh" class="grow" style="display:flex;justify-content:flex-end">
+          <button class="ghost" onclick="loadVideos()">↻ Refresh</button>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:16px">
+        <label class="f">From<input type="date" id="fFrom"></label>
+        <label class="f">To<input type="date" id="fTo"></label>
+        <label class="f">Min size MB<input type="number" id="fMin" value="0" min="0" style="width:92px"></label>
+        <div class="grow"></div>
+        <label class="chk"><input type="checkbox" id="fHideDone" checked> Hide processed</label>
+        <label class="chk"><input type="checkbox" id="fThumbs" checked> Thumbnails</label>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <button class="ghost sm" onclick="toggleAll(true)">Select all</button>
+        <button class="ghost sm" onclick="toggleAll(false)">Clear</button>
+        <button class="ghost sm" onclick="setAllFolders(true)">Expand</button>
+        <button class="ghost sm" onclick="setAllFolders(false)">Collapse</button>
+      </div>
+
+      <div class="listbox"><div class="listscroll" id="vidBox"></div></div>
+
+      <div class="row" style="margin-top:16px">
+        <span id="selSummary" class="muted grow">Nothing selected</span>
+        <button id="pullBtn" onclick="startPull()" disabled>Pull to Mac →</button>
+      </div>
+      <div class="muted faint" style="margin-top:10px;font-size:12px">
+        Originals are copied to your Mac first. Once pulled, the phone can be unplugged —
+        compressing and reviewing work entirely offline.
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 2 · COMPRESS ===== -->
+  <div id="paneEncode" class="hidden">
+    <div class="card">
+      <h2>Encoder profile</h2>
+      <div class="row">
+        <div class="seg">
+          <button id="pQuality" class="on" onclick="setProfile('quality')">Quality · x265</button>
+          <button id="pFast" onclick="setProfile('fast')">Fast · hardware</button>
+        </div>
+        <span class="muted" id="profileHint"></span>
+      </div>
+      <details>
+        <summary>Advanced settings</summary>
+        <div class="advgrid">
+          <label class="f">CRF · quality
+            <span class="row" style="gap:8px"><input type="range" id="crf" min="24" max="36" value="32"
+              oninput="crfVal.textContent=this.value" style="width:130px">
+              <b class="num" id="crfVal" style="font-size:13px">32</b></span></label>
+          <label class="f">x265 preset
+            <select id="preset"><option value="slow" selected>slow</option>
+              <option value="medium">medium</option></select></label>
+          <label class="f">Hardware quality
+            <span class="row" style="gap:8px"><input type="range" id="vtq" min="30" max="80" value="55"
+              oninput="vtqVal.textContent=this.value" style="width:130px">
+              <b class="num" id="vtqVal" style="font-size:13px">55</b></span></label>
+          <label class="f">Resolution
+            <select id="maxEdge"><option value="1920" selected>Downscale to 1080p</option>
+              <option value="0">Keep original</option></select></label>
+          <label class="f">Audio
+            <select id="abr"><option>96k</option><option selected>128k</option>
+              <option>192k</option></select></label>
+        </div>
+      </details>
+      <div class="row" style="margin-top:18px">
+        <button id="encBtn" onclick="startEncode()">Compress pulled videos</button>
+        <span class="muted" id="encHint"></span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Library</h2>
+      <div class="statgrid" id="libStats"></div>
+    </div>
+  </div>
+
+  <!-- ===== 3 · REVIEW ===== -->
+  <div id="paneReview" class="hidden">
+    <div class="card">
+      <div class="row" style="margin-bottom:14px">
+        <h2 class="grow" style="margin:0">Review</h2>
+        <div class="seg">
+          <button id="rfPending" class="on" onclick="setRevFilter('ready_for_review')">Pending</button>
+          <button id="rfApproved" onclick="setRevFilter('approved')">Approved</button>
+          <button id="rfAll" onclick="setRevFilter('all')">All</button>
+        </div>
+        <button class="ghost sm" onclick="approveAll()">Approve all pending</button>
+      </div>
+      <div class="revgrid" id="revGrid"></div>
+      <div class="row" style="margin-top:18px">
+        <span id="revSummary" class="muted grow"></span>
+        <input id="outDir" class="hidden" placeholder="Output folder" style="min-width:230px">
+        <button id="pushBtn" class="good" onclick="startPush()" disabled>Push approved to phone</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Disk usage</h2>
+      <div class="statgrid" id="diskStats"></div>
+      <div class="row" style="margin-top:14px">
+        <button class="ghost sm" onclick="cleanupOriginals()">Delete originals of pushed videos</button>
+        <span class="muted faint" style="font-size:12px">
+          Both copies are kept until you remove them yourself.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== COMPARE MODAL ===== -->
+<div id="modal" class="hidden">
+  <div class="mhead">
+    <span class="mtitle grow" id="mTitle"></span>
+    <span class="badge ok num" id="mSaved"></span>
+    <span class="muted num" id="mStats"></span>
+    <div class="seg">
+      <button id="modeSplit" class="on" onclick="setCmpMode('split')">Split</button>
+      <button id="modeSide" onclick="setCmpMode('side')">Side by side</button>
+    </div>
+    <button class="ghost sm icon" onclick="closeCompare()">✕</button>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="cmpwrap" id="cmpwrap">
+      <video id="vB" preload="metadata" playsinline></video>
+      <video id="vA" class="top" preload="metadata" playsinline></video>
+      <div class="cmplabel" id="labA" style="left:12px">Original<span class="s" id="labAs"></span></div>
+      <div class="cmplabel" id="labB" style="right:12px">Compressed<span class="s" id="labBs"></span></div>
+      <div class="cmpline" id="cmpline"><div class="cmphandle" id="cmphandle">⇄</div></div>
+    </div>
+  </div>
+
+  <div class="mctl">
+    <button id="cmpPlay" onclick="cmpToggle()">▶ Play</button>
+    <button class="ghost sm" onclick="cmpStep(-1)">−1f</button>
+    <button class="ghost sm" onclick="cmpStep(1)">+1f</button>
+    <input type="range" id="seek" min="0" max="1000" value="0" oninput="cmpSeek(this.value)">
+    <span class="muted num" id="cmpTime">0:00</span>
+    <span class="tag" id="tagA">🔊 original</span>
+    <span class="tag" id="tagB">compressed</span>
+    <button class="ghost sm" onclick="cmpAudio('A')">Original audio</button>
+    <button class="ghost sm" onclick="cmpAudio('B')">Compressed audio</button>
+    <button class="good sm" onclick="approveFromModal(true)">✓ Approve</button>
+    <button class="danger sm" onclick="approveFromModal(false)">✕ Reject</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+let videos = [], selected = new Set(), collapsed = new Set();
+let source = 'phone', profile = 'quality', tab = 'select';
+let libItems = [], revFilter = 'ready_for_review', modalItem = null;
+let cmpMode = 'split', cmpPos = 50;
+
+const $ = id => document.getElementById(id);
+const GB = 1024**3, MB = 1024**2;
+const fmtSize = b => b == null ? '–' : b >= GB ? (b/GB).toFixed(2)+' GB' : (b/MB).toFixed(1)+' MB';
+const fmtDate = t => new Date(t*1000).toLocaleDateString(undefined,
+  {year:'numeric', month:'short', day:'numeric'});
+const fmtTime = s => isFinite(s) ? `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}` : '0:00';
+const esc = s => String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let toastT;
+function toast(msg, isErr) {
+  const t = $('toast');
+  t.textContent = msg; t.className = 'show' + (isErr ? ' err' : '');
+  clearTimeout(toastT);
+  toastT = setTimeout(() => t.className = '', 4200);
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || r.statusText);
+  return d;
+}
+const postJSON = (p, b) => api(p, {method:'POST', headers:{'Content-Type':'application/json'},
+                                   body: JSON.stringify(b)});
+
+// count-up animation on stat numbers
+function animateNum(el, to, fmt) {
+  const from = parseFloat(el.dataset.v || 0);
+  if (from === to) { el.textContent = fmt(to); return; }
+  el.dataset.v = to;
+  const t0 = performance.now(), dur = 420;
+  (function step(now) {
+    const k = Math.min(1, (now - t0) / dur);
+    const eased = 1 - Math.pow(1 - k, 3);
+    el.textContent = fmt(from + (to - from) * eased);
+    if (k < 1) requestAnimationFrame(step);
+  })(t0);
+}
+
+function showTab(t) {
+  tab = t;
+  ['Select','Encode','Review'].forEach(k => {
+    $('pane'+k).classList.toggle('hidden', k.toLowerCase() !== t);
+    $('tab'+k).classList.toggle('on', k.toLowerCase() === t);
+  });
+  if (t !== 'select') loadLibrary();
+}
+
+// ---------- device ----------
+async function pollDevice() {
+  try {
+    const d = await api('/api/device');
+    const b = $('devBadge'), lab = $('devLabel'), txt = $('devText'), help = $('devHelp');
+    if (d.state === 'connected') {
+      b.className = 'badge ok'; lab.textContent = d.model || 'Connected';
+      b.querySelector('.dot').classList.add('live');
+      txt.textContent = d.free_bytes != null ? `${fmtSize(d.free_bytes)} free on phone` : '';
+      help.classList.add('hidden');
+    } else if (d.state === 'unauthorized') {
+      b.className = 'badge warn'; lab.textContent = 'Authorize on phone';
+      txt.textContent = 'Tap “Allow USB debugging”'; help.classList.remove('hidden');
+    } else if (d.state === 'no-adb') {
+      b.className = 'badge off'; lab.textContent = 'adb missing';
+      txt.textContent = 'Run setup.sh'; help.classList.add('hidden');
+    } else {
+      b.className = 'badge off'; lab.textContent = 'No phone';
+      b.querySelector('.dot').classList.remove('live');
+      txt.textContent = 'Folder mode still works'; help.classList.remove('hidden');
+    }
+    $('macText').textContent =
+      `${fmtSize(d.mac_free_bytes)} free · library ${fmtSize(d.library_bytes)}`;
+  } catch (e) {}
+}
+
+// ---------- source & listing ----------
+function setSource(s) {
+  source = s;
+  $('srcPhone').classList.toggle('on', s === 'phone');
+  $('srcFolder').classList.toggle('on', s === 'folder');
+  $('folderPick').classList.toggle('hidden', s !== 'folder');
+  $('phoneRefresh').classList.toggle('hidden', s !== 'phone');
+  videos = []; selected.clear();
+  if (s === 'phone') loadVideos(); else renderVideos();
+}
+function skeleton(n) {
+  return Array.from({length:n}, () => '<div class="skel"></div>').join('');
+}
+function emptyState(icon, title, desc) {
+  return `<div class="empty">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
+         style="color:var(--text-faint)">${icon}</svg>
+    <div class="t">${title}</div><div class="d">${desc}</div></div>`;
+}
+const ICON_FILM = '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 4v16M17 4v16M2 9h5M2 15h5M17 9h5M17 15h5"/>';
+const ICON_PHONE = '<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/>';
+const ICON_CHECK = '<path d="M20 6 9 17l-5-5"/>';
+
+async function loadVideos() {
+  $('vidBox').innerHTML = skeleton(6);
+  try {
+    let d;
+    if (source === 'folder') {
+      const p = $('folderPath').value.trim();
+      if (!p) { $('vidBox').innerHTML = emptyState(ICON_FILM, 'Choose a folder',
+        'Enter a folder path above and press Scan.'); return; }
+      d = await postJSON('/api/folder/scan', {path: p});
+    } else {
+      d = await api('/api/videos');
+    }
+    videos = d.videos; selected.clear(); collapsed.clear();
+    const g = groupByFolder(videos);
+    if (g.length > 3) g.forEach(([f]) => collapsed.add(f));
+    renderVideos();
+  } catch (e) {
+    const isNoPhone = source === 'phone' && /no phone/i.test(e.message);
+    $('vidBox').innerHTML = emptyState(
+      source === 'phone' ? ICON_PHONE : ICON_FILM,
+      isNoPhone ? 'No phone connected' : source === 'phone' ? 'Can’t read the phone' : 'Scan failed',
+      isNoPhone ? 'Plug in over USB with debugging enabled, then press Refresh. Folder mode works without a phone.'
+                : esc(e.message));
+  }
+}
+function visibleVideos() {
+  const from = $('fFrom').value ? new Date($('fFrom').value).getTime()/1000 : 0;
+  const to = $('fTo').value ? new Date($('fTo').value).getTime()/1000 + 86400 : Infinity;
+  const min = (parseFloat($('fMin').value) || 0) * MB;
+  const hide = $('fHideDone').checked;
+  return videos.filter(v => v.mtime >= from && v.mtime < to && v.size >= min && !(hide && v.item_id));
+}
+function groupByFolder(list) {
+  const g = new Map();
+  list.forEach(v => { const f = v.folder || '/'; if (!g.has(f)) g.set(f, []); g.get(f).push(v); });
+  return [...g.entries()].sort((a,b) => a[0].localeCompare(b[0]));
+}
+function stateBadge(s) {
+  if (!s) return '<span class="muted faint" style="font-size:12px">new</span>';
+  const cls = s === 'pushed' ? 'ok' : s === 'failed' ? 'off'
+            : s === 'kept_original' ? 'warn' : 'info';
+  return `<span class="badge ${cls}" style="font-size:11px;padding:2px 8px">${esc(s.replace(/_/g,' '))}</span>`;
+}
+function renderVideos() {
+  const groups = groupByFolder(visibleVideos());
+  if (!groups.length) {
+    $('vidBox').innerHTML = videos.length
+      ? emptyState(ICON_CHECK, 'Nothing matches', 'Adjust the filters above to see more videos.')
+      : emptyState(ICON_FILM, 'No videos yet',
+          source === 'phone' ? 'Connect your phone and press Refresh.' : 'Scan a folder to begin.');
+    updateSummary(); return;
+  }
+  const showThumbs = $('fThumbs').checked;
+  $('vidBox').innerHTML = groups.map(([folder, items]) => {
+    const open = !collapsed.has(folder);
+    const selCount = items.filter(v => selected.has(v.path)).length;
+    const bytes = items.reduce((a,v) => a+v.size, 0);
+    const short = folder.replace(/^\/sdcard\//,'').replace(/^\//,'') || '/';
+    const nm = short.split('/').pop(), parent = short.slice(0, short.length - nm.length);
+    return `<div class="fgroup">
+      <div class="fhead" onclick="toggleFolder('${esc(folder)}',event)">
+        <span class="caret ${open?'open':''}">▶</span>
+        <input type="checkbox" ${selCount===items.length?'checked':''} onclick="event.stopPropagation()"
+               onchange="toggleFolderSel('${esc(folder)}',this.checked)">
+        <span class="fname">${esc(nm)}</span>
+        <span class="fpath">${esc(parent)}</span>
+        <span class="fmeta">${selCount?`<span style="color:var(--accent)">${selCount} selected</span> · `:''}${items.length} videos · ${fmtSize(bytes)}</span>
+      </div>
+      ${open ? items.map(v => `
+        <div class="frow ${selected.has(v.path)?'sel':''}" onclick="rowClick('${esc(v.path)}',event)">
+          <input type="checkbox" ${selected.has(v.path)?'checked':''}
+                 onclick="event.stopPropagation()" onchange="toggleOne('${esc(v.path)}',this.checked)">
+          ${showThumbs ? (source === 'phone'
+            ? `<img class="th" loading="lazy" src="/api/thumb?path=${encodeURIComponent(v.path)}&mtime=${v.mtime}&size=${v.size}"
+                 onerror="this.outerHTML='<div class=&quot;th&quot;>🎞</div>'">`
+            : `<div class="th">🎞</div>`) : ''}
+          <span class="nm grow">${esc(v.name)}</span>
+          <span class="dt">${fmtDate(v.mtime)}</span>
+          <span class="sz num">${fmtSize(v.size)}</span>
+          <span class="st">${stateBadge(v.item_state)}</span>
+        </div>`).join('') : ''}
+    </div>`;
+  }).join('');
+  updateSummary();
+}
+function rowClick(path, ev) {
+  if (ev.target.tagName === 'INPUT') return;
+  toggleOne(path, !selected.has(path));
+}
+function toggleFolder(f, ev) {
+  if (ev && ev.target.tagName === 'INPUT') return;
+  collapsed.has(f) ? collapsed.delete(f) : collapsed.add(f);
+  renderVideos();
+}
+function setAllFolders(open) {
+  collapsed.clear();
+  if (!open) groupByFolder(visibleVideos()).forEach(([f]) => collapsed.add(f));
+  renderVideos();
+}
+function toggleFolderSel(f, on) {
+  visibleVideos().filter(v => (v.folder||'/') === f)
+    .forEach(v => on ? selected.add(v.path) : selected.delete(v.path));
+  renderVideos();
+}
+function toggleOne(p, on) { on ? selected.add(p) : selected.delete(p); renderVideos(); }
+function toggleAll(on) {
+  if (on) visibleVideos().forEach(v => selected.add(v.path)); else selected.clear();
+  renderVideos();
+}
+function updateSummary() {
+  const sel = videos.filter(v => selected.has(v.path));
+  const total = sel.reduce((a,v) => a+v.size, 0);
+  const folders = new Set(sel.map(v => v.folder||'/')).size;
+  $('selSummary').innerHTML = sel.length
+    ? `<b style="color:var(--text-primary)" class="num">${sel.length}</b> selected across
+       ${folders} folder${folders>1?'s':''} · <span class="num">${fmtSize(total)}</span>`
+    : 'Nothing selected';
+  $('pullBtn').disabled = !sel.length;
+}
+['fFrom','fTo','fMin','fHideDone','fThumbs'].forEach(id =>
+  $(id).addEventListener('change', renderVideos));
+
+// ---------- phases ----------
+async function startPull() {
+  const sel = videos.filter(v => selected.has(v.path));
+  try {
+    await postJSON('/api/phases/pull', {source, videos: sel});
+    selected.clear(); renderVideos(); pollPhase();
+    toast(`Pulling ${sel.length} video${sel.length>1?'s':''} — you can unplug when it finishes`);
+  } catch (e) { toast(e.message, true); }
+}
+function setProfile(p) {
+  profile = p;
+  $('pQuality').classList.toggle('on', p==='quality');
+  $('pFast').classList.toggle('on', p==='fast');
+  $('profileHint').textContent = p === 'quality'
+    ? 'Best compression. Slow — fine to leave running for hours.'
+    : 'Apple hardware encoder: ~10× faster, files ~1.5–2× larger.';
+}
+async function startEncode() {
+  try {
+    await postJSON('/api/phases/encode', {profile, crf:+$('crf').value, preset:$('preset').value,
+      vt_quality:+$('vtq').value, max_long_edge:+$('maxEdge').value, audio_bitrate:$('abr').value});
+    pollPhase();
+  } catch (e) { toast(e.message, true); }
+}
+async function startPush() {
+  try {
+    const b = {}; const o = $('outDir').value.trim(); if (o) b.output_dir = o;
+    await postJSON('/api/phases/push', b); pollPhase();
+  } catch (e) { toast(e.message, true); }
+}
+async function cancelPhase() {
+  try { await api('/api/phases/cancel', {method:'POST'}); } catch (e) { toast(e.message, true); }
+}
+// A completed phase from a previous page session shouldn't greet you on load.
+let wasRunning = false, phaseDismissed = false, phaseSeen = false;
+async function pollPhase() {
+  let p;
+  try { p = await api('/api/phases/current'); } catch (e) { return; }
+  const running = p.state === 'running';
+  // On first poll, ignore an already-finished phase left over from a previous session.
+  if (!phaseSeen) { phaseSeen = true; if (!running) phaseDismissed = true; }
+  // Hide the card once a finished run has been acknowledged.
+  const show = p.state !== 'idle' && (running || !phaseDismissed);
+  $('phaseCard').classList.toggle('hidden', !show);
+  if (show) {
+    const labels = {pull:'Pulling from phone', encode:'Compressing', push:'Pushing to phone'};
+    const badge = $('phKind').parentElement;
+    $('phKind').textContent = running ? (labels[p.kind] || p.kind)
+      : p.state === 'done' ? 'Finished' : p.state;
+    badge.className = 'badge ' + (running ? 'info' : p.state === 'done' ? 'ok' : 'off');
+    badge.querySelector('.dot').classList.toggle('live', running);
+
+    const pct = p.total ? 100*p.completed/p.total : 0;
+    const bar = $('phBar');
+    // blend the current file's encode progress into the overall bar
+    const shown = (p.kind === 'encode' && running && p.total)
+      ? pct + (p.progress * 100 / p.total) : pct;
+    bar.classList.toggle('indet', running && p.kind !== 'encode' && !p.total);
+    bar.style.width = (running ? shown : 100) + '%';
+    $('phPct').textContent = running ? shown.toFixed(0) + '%' : '';
+    $('phCancel').classList.toggle('hidden', !running);
+    $('phCount').textContent = `${p.completed} of ${p.total} files`;
+    const it = p.current_item;
+    $('phCurrent').textContent = running
+      ? (it ? it.name + (p.kind === 'encode' && p.speed ? `  ·  ${p.speed}` : '') : '')
+      : (p.error ? p.error : '');
+  }
+  if (wasRunning && !running) {
+    loadLibrary();
+    if (tab === 'select' && source === 'phone') loadVideosQuiet();
+    toast(p.error ? p.error : `${p.completed} file${p.completed===1?'':'s'} done`, !!p.error);
+    // let the finished card linger briefly, then tidy up
+    setTimeout(() => { phaseDismissed = true; }, 6000);
+  }
+  if (running) phaseDismissed = false;
+  wasRunning = running;
+}
+async function loadVideosQuiet() {
+  try { const d = await api('/api/videos'); videos = d.videos; renderVideos(); } catch (e) {}
+}
+
+// ---------- library ----------
+async function loadLibrary() {
+  try {
+    const d = await api('/api/library');
+    libItems = d.items;
+    renderStats(d.counts, d.usage);
+    renderReview();
+  } catch (e) {}
+}
+function renderStats(counts, usage) {
+  const c = k => counts[k] || 0;
+  const saved = libItems.filter(m => ['ready_for_review','approved','pushed'].includes(m.state))
+    .reduce((a,m) => a + Math.max(0,(m.original_size||0)-(m.compressed_size||0)), 0);
+  $('libStats').innerHTML = `
+    <div class="stat hero"><b data-id="hs">${fmtSize(saved)}</b><span>space saved</span></div>
+    <div class="stat"><b class="num">${c('pulled')}</b><span>ready to compress</span></div>
+    <div class="stat"><b class="num">${c('ready_for_review')}</b><span>awaiting review</span></div>
+    <div class="stat"><b class="num">${c('approved')}</b><span>approved</span></div>
+    <div class="stat"><b class="num">${c('pushed')}</b><span>pushed</span></div>
+    ${c('failed') ? `<div class="stat"><b class="num" style="color:var(--danger)">${c('failed')}</b><span>failed</span></div>` : ''}`;
+  $('encHint').textContent = c('pulled') ? `${c('pulled')} waiting` : 'Nothing pulled yet';
+  $('encBtn').disabled = !c('pulled');
+  $('diskStats').innerHTML = `
+    <div class="stat"><b>${fmtSize(usage.originals)}</b><span>originals kept</span></div>
+    <div class="stat"><b>${fmtSize(usage.compressed)}</b><span>compressed</span></div>
+    <div class="stat"><b>${fmtSize(usage.total)}</b><span>library total</span></div>`;
+  // step badges
+  const setCount = (id, n) => {
+    const el = $(id); el.textContent = n; el.classList.toggle('hidden', !n);
+  };
+  setCount('cntPulled', c('pulled'));
+  setCount('cntReview', c('ready_for_review'));
+}
+function setRevFilter(f) {
+  revFilter = f;
+  ['rfPending','rfApproved','rfAll'].forEach(id => $(id).classList.remove('on'));
+  $({ready_for_review:'rfPending', approved:'rfApproved', all:'rfAll'}[f]).classList.add('on');
+  renderReview();
+}
+function reviewable() {
+  if (revFilter === 'all')
+    return libItems.filter(m => ['ready_for_review','approved','rejected','pushed','kept_original'].includes(m.state));
+  return libItems.filter(m => m.state === revFilter);
+}
+function renderReview() {
+  const items = reviewable();
+  $('revGrid').innerHTML = items.length ? items.map(m => {
+    const saved = m.compressed_size && m.original_size
+      ? Math.round(100*(1 - m.compressed_size/m.original_size)) : null;
+    const canCompare = m.compressed_size && m.state !== 'kept_original';
+    return `<div class="rev ${m.state==='approved'?'approved':m.state==='rejected'?'rejected':''}">
+      <div class="revthumb" ${canCompare?`onclick="openCompare('${m.id}')"`:''}>
+        <img loading="lazy" src="/api/items/${m.id}/thumb"
+             onerror="this.outerHTML='<div style=&quot;color:var(--text-faint);font-size:26px&quot;>🎞</div>'">
+        ${canCompare?`<div class="playover"><div class="playbtn">⇄</div></div>`:''}
+        ${saved!==null && saved>0?`<div class="savetag">−${saved}%</div>`:''}
+      </div>
+      <div class="revbody">
+        <div class="revname" title="${esc(m.name)}">${esc(m.name)}</div>
+        <div class="revsize"><s>${fmtSize(m.original_size)}</s> → <b style="color:var(--text-secondary)">${fmtSize(m.compressed_size)}</b>
+          &nbsp;${stateBadge(m.state)}</div>
+        <div class="revacts">
+          ${canCompare?`<button class="ghost sm grow" onclick="openCompare('${m.id}')">⇄ Compare</button>`:''}
+          ${m.state!=='pushed'&&m.state!=='kept_original'?`
+            <button class="good sm" onclick="setApproval(['${m.id}'],true)" title="Approve">✓</button>
+            <button class="ghost sm" onclick="setApproval(['${m.id}'],false)" title="Reject">✕</button>`:''}
+        </div>
+      </div></div>`;
+  }).join('') : emptyState(ICON_CHECK, 'Nothing here',
+      revFilter === 'ready_for_review'
+        ? 'Compressed videos appear here for you to review before anything is written back.'
+        : 'No videos in this state yet.');
+
+  const approved = libItems.filter(m => m.state === 'approved');
+  const bytes = approved.reduce((a,m) => a + ((m.original_size||0)-(m.compressed_size||0)), 0);
+  $('revSummary').innerHTML = approved.length
+    ? `<b style="color:var(--success)" class="num">${approved.length}</b> approved ·
+       frees <b class="num" style="color:var(--success)">${fmtSize(bytes)}</b> on the phone`
+    : 'Approve videos to enable pushing';
+  $('pushBtn').disabled = !approved.length;
+  const anyFolder = approved.some(m => m.source === 'folder');
+  $('outDir').classList.toggle('hidden', !anyFolder);
+  $('pushBtn').textContent = anyFolder ? 'Push approved' : 'Push approved to phone';
+}
+async function setApproval(ids, ok) {
+  try { await postJSON('/api/items/approve', {item_ids: ids, approved: ok}); await loadLibrary(); }
+  catch (e) { toast(e.message, true); }
+}
+function approveAll() {
+  const ids = libItems.filter(m => m.state === 'ready_for_review').map(m => m.id);
+  if (!ids.length) return toast('Nothing pending review');
+  setApproval(ids, true);
+}
+async function cleanupOriginals() {
+  try {
+    const d = await postJSON('/api/library/cleanup', {originals_of_pushed:true});
+    toast(d.freed ? `Freed ${fmtSize(d.freed)}` : 'Nothing to delete');
+    loadLibrary();
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------- compare ----------
+const vA = () => $('vA'), vB = () => $('vB');
+let syncT = null;
+function openCompare(id) {
+  const m = libItems.find(x => x.id === id); if (!m) return;
+  modalItem = m;
+  $('mTitle').textContent = m.name;
+  const saved = Math.round(100*(1 - m.compressed_size/m.original_size));
+  $('mSaved').textContent = `−${saved}% smaller`;
+  const pr = m.probe || {};
+  $('mStats').textContent = pr.width ? `${pr.width}×${pr.height} · ${Math.round(pr.fps||0)}fps` : '';
+  $('labAs').textContent = fmtSize(m.original_size);
+  $('labBs').textContent = fmtSize(m.compressed_size);
+  vA().src = `/api/media/${m.id}/original`;
+  vB().src = `/api/media/${m.id}/compressed`;
+  cmpPos = 50; setCmpMode(cmpMode); cmpAudio('A');
+  $('modal').classList.remove('hidden');
+  $('cmpPlay').textContent = '▶ Play';
+  clearInterval(syncT);
+  syncT = setInterval(() => {
+    const a = vA(), b = vB();
+    if (!a.paused && Math.abs(a.currentTime - b.currentTime) > 0.15) b.currentTime = a.currentTime;
+    if (a.duration) {
+      $('seek').value = Math.round(1000*a.currentTime/a.duration);
+      $('cmpTime').textContent = `${fmtTime(a.currentTime)} / ${fmtTime(a.duration)}`;
+    }
+    // keep the button honest when playback ends on its own
+    if (a.paused && $('cmpPlay').textContent.includes('Pause')) {
+      $('cmpPlay').textContent = '▶ Play';
+      if (!b.paused) b.pause();
+    }
+  }, 200);
+  vA().addEventListener('ended', () => { vB().pause(); $('cmpPlay').textContent = '↻ Replay'; },
+                        {once: false});
+}
+function setCmpMode(mode) {
+  cmpMode = mode;
+  $('modeSplit').classList.toggle('on', mode === 'split');
+  $('modeSide').classList.toggle('on', mode === 'side');
+  const wrap = $('cmpwrap'), a = vA(), b = vB();
+  if (mode === 'split') {
+    wrap.classList.remove('side');
+    a.className = 'top';
+    $('cmpline').style.display = '';
+    $('labA').style.left = '12px'; $('labB').style.right = '12px'; $('labB').style.left = '';
+    applySplit();
+  } else {
+    // side-by-side: equal panes, original left / compressed right
+    wrap.classList.add('side');
+    a.className = ''; a.style.clipPath = 'none';
+    $('cmpline').style.display = 'none';
+    // pin each label to its own pane
+    $('labA').style.left = '12px';
+    $('labB').style.right = ''; $('labB').style.left = 'calc(50% + 12px)';
+  }
+}
+function applySplit() {
+  if (cmpMode !== 'split') return;
+  vA().style.clipPath = `inset(0 ${100-cmpPos}% 0 0)`;
+  $('cmpline').style.left = cmpPos + '%';
+}
+(function initDrag() {
+  const wrap = $('cmpwrap');
+  let dragging = false;
+  const move = e => {
+    if (!dragging || cmpMode !== 'split') return;
+    const r = wrap.getBoundingClientRect();
+    const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    cmpPos = Math.max(0, Math.min(100, 100*x/r.width));
+    applySplit();
+  };
+  const down = e => {
+    if (cmpMode !== 'split') return;
+    dragging = true; document.body.classList.add('grabbing'); move(e);
+  };
+  const up = () => { dragging = false; document.body.classList.remove('grabbing'); };
+  wrap.addEventListener('mousedown', down);
+  wrap.addEventListener('touchstart', down, {passive:true});
+  window.addEventListener('mousemove', move);
+  window.addEventListener('touchmove', move, {passive:true});
+  window.addEventListener('mouseup', up);
+  window.addEventListener('touchend', up);
+})();
+function closeCompare() {
+  clearInterval(syncT);
+  [vA(), vB()].forEach(v => { v.pause(); v.removeAttribute('src'); v.load(); });
+  $('modal').classList.add('hidden'); modalItem = null;
+}
+function cmpToggle() {
+  const a = vA(), b = vB();
+  if (a.paused) {
+    // replay from the start if we're sitting at the end
+    if (a.duration && a.currentTime >= a.duration - 0.05) { a.currentTime = 0; }
+    b.currentTime = a.currentTime;
+    Promise.all([a.play(), b.play()]).catch(() => toast('Playback failed', true));
+    $('cmpPlay').textContent = '⏸ Pause';
+  } else { a.pause(); b.pause(); $('cmpPlay').textContent = '▶ Play'; }
+}
+function cmpSeek(v) {
+  const a = vA(), b = vB(); if (!a.duration) return;
+  const t = a.duration * v/1000; a.currentTime = t; b.currentTime = t;
+}
+function cmpStep(dir) {
+  const a = vA(), b = vB();
+  const step = 1/((modalItem?.probe?.fps) || 30);
+  a.pause(); b.pause(); $('cmpPlay').textContent = '▶ Play';
+  const t = Math.max(0, a.currentTime + dir*step);
+  a.currentTime = t; b.currentTime = t;
+}
+function cmpAudio(which) {
+  vA().muted = which !== 'A'; vB().muted = which !== 'B';
+  $('tagA').className = 'tag' + (which === 'A' ? ' on' : '');
+  $('tagA').textContent = (which === 'A' ? '🔊 ' : '') + 'original';
+  $('tagB').className = 'tag' + (which === 'B' ? ' on' : '');
+  $('tagB').textContent = (which === 'B' ? '🔊 ' : '') + 'compressed';
+}
+async function approveFromModal(ok) {
+  if (!modalItem) return;
+  await setApproval([modalItem.id], ok);
+  closeCompare();
+}
+document.addEventListener('keydown', e => {
+  if ($('modal').classList.contains('hidden')) return;
+  if (e.key === 'Escape') closeCompare();
+  else if (e.key === ' ') { e.preventDefault(); cmpToggle(); }
+  else if (e.key === 'ArrowLeft') cmpStep(-1);
+  else if (e.key === 'ArrowRight') cmpStep(1);
+  else if (e.key === 'a' || e.key === 'A') cmpAudio('A');
+  else if (e.key === 'b' || e.key === 'B') cmpAudio('B');
+});
+
+setProfile('quality');
+pollDevice(); setInterval(pollDevice, 5000);
+pollPhase(); setInterval(pollPhase, 1200);
+loadLibrary();
+loadVideos();
+</script>
+</body>
+</html>
